@@ -109,12 +109,21 @@ d3_games = []
 # get today's date in the format YYYY-MM-DD
 today = time.strftime("%Y-%m-%d")
 
+# Require an explicit year/week value from the scheduler or workflow. Do not
+# silently fall back so failed scheduler calls fail loudly.
+year_raw = os.getenv('YEAR') or os.getenv('year')
+week_raw = os.getenv('WEEK') or os.getenv('week') or os.getenv('CFBD_WEEK')
+
+if year_raw is None or week_raw is None:
+    raise RuntimeError('Missing YEAR and WEEK environment variables. cron-job.org must send both values for each run.')
+
+year = int(year_raw)
+week = int(week_raw)
+
 # Enter a context with an instance of the API client
 with cfbd.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = cfbd.DrivesApi(api_client)
-    year = 2026
-    week = 3
 
 
     try:

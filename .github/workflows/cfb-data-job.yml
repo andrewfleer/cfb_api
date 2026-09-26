@@ -2,6 +2,15 @@ name: CFB Data Job
 
 on:
   workflow_dispatch:
+    inputs:
+      year:
+        description: 'Season year'
+        required: true
+        type: string
+      week:
+        description: 'College football week number'
+        required: true
+        type: string
 
 jobs:
   run-python:
@@ -26,4 +35,6 @@ jobs:
           host: ${{ secrets.HOST }}
           access_token: ${{ secrets.ACCESS_TOKEN }}
           discord_webhook: ${{ secrets.DISCORD_WEBHOOK }}
+          YEAR: ${{ github.event.inputs.year }}
+          WEEK: ${{ github.event.inputs.week }}
         run: python main.py
