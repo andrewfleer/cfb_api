@@ -4,15 +4,29 @@ import cfbd
 from cfbd.exceptions import ApiException
 from pprint import pprint
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 import requests
 
-# Load environment variables from .env file
-load_dotenv(dotenv_path='secrets.env')
+# Load environment variables from a local file when present, but also allow
+# GitHub Actions / CI secrets to override or provide values at runtime.
+base_dir = Path(__file__).resolve().parent
+load_dotenv(dotenv_path=base_dir / 'secrets.env', override=False)
 
-secret_host = os.getenv('host')
-secret_access_token = os.getenv('access_token')
-secret_discord_webhook = os.getenv('discord_webhook')
+secret_host = (
+    os.getenv('host')
+    or os.getenv('HOST')
+    or os.getenv('CFBD_HOST')
+    or 'https://api.collegefootballdata.com'
+)
+secret_access_token = os.getenv('access_token') or os.getenv('ACCESS_TOKEN')
+secret_discord_webhook = os.getenv('discord_webhook') or os.getenv('DISCORD_WEBHOOK')
+
+if not secret_access_token:
+    raise RuntimeError('Missing access token. Set ACCESS_TOKEN (or access_token) as a GitHub Actions secret.')
+
+if not secret_discord_webhook:
+    raise RuntimeError('Missing Discord webhook. Set DISCORD_WEBHOOK (or discord_webhook) as a GitHub Actions secret.')
 
 # Defining the host is optional and defaults to https://api.collegefootballdata.com
 # See configuration.py for a list of all supported configuration parameters.
