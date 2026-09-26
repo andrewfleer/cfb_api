@@ -1,0 +1,3 @@
+cfbd
+python-dotenv
+requests
