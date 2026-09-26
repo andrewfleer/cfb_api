@@ -513,14 +513,14 @@ with open("lowest_scoring_d3_games_{}.txt".format(today), "w") as f:
 
 
 # Send each file to discord via webhook
-#for filename in ["scoring_drives_{}.txt", "non_scoring_drives_{}.txt", "longest_punts_{}.txt", "safeties_{}.txt", "field_goals_{}.txt", "spinach_teams_of_the_week_{}.txt", "highest_scoring_fbs_games_{}.txt", "lowest_scoring_fbs_games_{}.txt", "highest_scoring_fcs_games_{}.txt", "lowest_scoring_fcs_games_{}.txt", "highest_scoring_d2_games_{}.txt", "lowest_scoring_d2_games_{}.txt", "highest_scoring_d3_games_{}.txt", "lowest_scoring_d3_games_{}.txt"]:
-#    with open(filename.format(today), "rb") as f:
-#        file_data = f.read()
-#        response = requests.post(
-#            webhook_url,
-#            files={"file": (filename.format(today), file_data)},
-#        )
-#        if response.status_code == 204 or response.status_code == 200:
-#            print(f"Successfully sent {filename.format(today)} to Discord.")
-#        else:
-#            print(f"Failed to send {filename.format(today)} to Discord. Status code: {response.status_code}")
+for filename in ["scoring_drives_{}.txt", "non_scoring_drives_{}.txt", "longest_punts_{}.txt", "safeties_{}.txt", "field_goals_{}.txt", "spinach_teams_of_the_week_{}.txt", "highest_scoring_fbs_games_{}.txt", "lowest_scoring_fbs_games_{}.txt", "highest_scoring_fcs_games_{}.txt", "lowest_scoring_fcs_games_{}.txt", "highest_scoring_d2_games_{}.txt", "lowest_scoring_d2_games_{}.txt", "highest_scoring_d3_games_{}.txt", "lowest_scoring_d3_games_{}.txt"]:
+    with open(filename.format(today), "rb") as f:
+        file_data = f.read()
+        response = requests.post(
+            webhook_url,
+            files={"file": (filename.format(today), file_data)},
+        )
+        if response.status_code == 204 or response.status_code == 200:
+            print(f"Successfully sent {filename.format(today)} to Discord.")
+        else:
+            print(f"Failed to send {filename.format(today)} to Discord. Status code: {response.status_code}")
