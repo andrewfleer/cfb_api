@@ -94,12 +94,25 @@ class Game:
         self.home_score = home_score
         self.away_score = away_score
 
+class SevenTeenToZeroGame:
+    def __init__(self, home_team, away_team, home_score, away_score, game_id):
+        self.home_team = home_team
+        self.away_team = away_team
+        self.home_score = home_score
+        self.away_score = away_score
+        self.game_id = game_id
+
+    seventeen_zero_team_lost = False
+    home_final_score = 0
+    away_final_score = 0
+
 scoring_drives = []
 non_scoring_drives = []
 punts = []
 safeties = []
 field_goals = []
 spinach_teams = []
+games_that_were_17_to_0 = []
 
 fbs_games = []
 fcs_games = []
@@ -151,6 +164,28 @@ with cfbd.ApiClient(configuration) as api_client:
                 scoring_drives.append(drive_results)
             else:
                 non_scoring_drives.append(drive_results)
+            if drive.end_offense_score == 17 and drive.end_defense_score == 0:
+                if drive.is_home_offense:
+                    home_team = drive.offense
+                    away_team = drive.defense
+                else:
+                    home_team = drive.defense
+                    away_team = drive.offense
+                seven_teen_to_zero_game = SevenTeenToZeroGame(
+                    home_team=home_team,
+                    away_team=away_team,
+                    home_score=drive.end_offense_score,
+                    away_score=drive.end_defense_score,
+                    game_id=drive.game_id
+                )
+                game_already_in_table = False
+                for game in games_that_were_17_to_0:
+                    if game.game_id == seven_teen_to_zero_game.game_id:
+                        game_already_in_table = True
+                        break
+                    
+                if not game_already_in_table:
+                    games_that_were_17_to_0.append(seven_teen_to_zero_game)
            # print(f"Drive ID: {drive.drive_id}, Team: {drive.offense_team}, Result: {drive.result}, Plays: {len(drive.plays)}")
     except Exception as e:
         print("Exception when calling DrivesApi->get_drives: %s\n" % e)
@@ -385,6 +420,26 @@ with cfbd.ApiClient(configuration) as api_client:
     except Exception as e:
         print("Exception when calling GamesApi for D3 Games->get_games: %s\n" % e)
 
+for seventeen_to_zero_game in games_that_were_17_to_0:
+    try:
+        game_data = games_api.get_games(year, week=week, id = seventeen_to_zero_game.game_id)
+        for game in game_data:
+            seventeen_to_zero_game.home_final_score = game.home_points
+            seventeen_to_zero_game.away_final_score = game.away_points
+            if seventeen_to_zero_game.home_score > seventeen_to_zero_game.away_score:
+                if game.home_points > game.away_points:
+                    seventeen_to_zero_game.seventeen_zero_team_lost = False
+                else:
+                    seventeen_to_zero_game.seventeen_zero_team_lost = True
+            elif seventeen_to_zero_game.away_score > seventeen_to_zero_game.home_score:
+                if game.away_points > game.home_points:
+                    seventeen_to_zero_game.seventeen_zero_team_lost = False
+                else:
+                    seventeen_to_zero_game.seventeen_zero_team_lost = True
+
+    except Exception as e:
+        print("Exception when calling GamesApi for 17-0 Games->get_games: %s\n" % e)
+
 
 ###################### REPORTING ######################
 
@@ -511,9 +566,29 @@ with open("lowest_scoring_d3_games_{}.txt".format(today), "w") as f:
     for i, game in enumerate(sorted(d3_games, key=lambda x: x.home_score + x.away_score)[:10]):
         f.write(f"{i+1}. {game.home_team} vs {game.away_team}: {game.home_score}-{game.away_score}\n")
 
+# Print games where 17-0 team lost
+with open("games_that_were_17_to_0_{}.txt".format(today), "w") as f:
+    f.write ("*** The Most Dangerous Lead In College Football ***\n")
+    f.write("Games that were 17-0:\n")
+    for i, game in enumerate(games_that_were_17_to_0):
+        if game.seventeen_zero_team_lost:
+            if game.home_score > game.away_score:
+                f.write(f"{i+1}. {game.home_team} vs {game.away_team}: {game.home_score}-{game.away_score}, {game.home_team} lost {game.away_final_score} - {game.home_final_score}\n")
+            else:
+                f.write(f"{i+1}. {game.home_team} vs {game.away_team}: {game.home_score}-{game.away_score}, {game.away_team} lost {game.home_final_score} - {game.away_final_score}\n")
+
+    f.write("\n =================================================== \n\n")
+    f.write ("Teams that survived:\n")
+    for i, game in enumerate(games_that_were_17_to_0):
+        if not game.seventeen_zero_team_lost:
+            if game.home_score > game.away_score:
+                f.write(f"{i+1}. {game.home_team} vs {game.away_team}: {game.home_score}-{game.away_score}, {game.home_team} survived with a win of {game.home_final_score} - {game.away_final_score}\n")
+            else:
+                f.write(f"{i+1}. {game.home_team} vs {game.away_team}: {game.home_score}-{game.away_score}, {game.away_team} survived with a win of {game.away_final_score} - {game.home_final_score}\n")
+
 
 # Send each file to discord via webhook
-for filename in ["scoring_drives_{}.txt", "non_scoring_drives_{}.txt", "longest_punts_{}.txt", "safeties_{}.txt", "field_goals_{}.txt", "spinach_teams_of_the_week_{}.txt", "highest_scoring_fbs_games_{}.txt", "lowest_scoring_fbs_games_{}.txt", "highest_scoring_fcs_games_{}.txt", "lowest_scoring_fcs_games_{}.txt", "highest_scoring_d2_games_{}.txt", "lowest_scoring_d2_games_{}.txt", "highest_scoring_d3_games_{}.txt", "lowest_scoring_d3_games_{}.txt"]:
+for filename in ["scoring_drives_{}.txt", "non_scoring_drives_{}.txt", "longest_punts_{}.txt", "safeties_{}.txt", "field_goals_{}.txt", "spinach_teams_of_the_week_{}.txt", "highest_scoring_fbs_games_{}.txt", "lowest_scoring_fbs_games_{}.txt", "highest_scoring_fcs_games_{}.txt", "lowest_scoring_fcs_games_{}.txt", "highest_scoring_d2_games_{}.txt", "lowest_scoring_d2_games_{}.txt", "highest_scoring_d3_games_{}.txt", "lowest_scoring_d3_games_{}.txt", "games_that_were_17_to_0_{}.txt"]:
     with open(filename.format(today), "rb") as f:
         file_data = f.read()
         response = requests.post(
