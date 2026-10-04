@@ -168,14 +168,18 @@ with cfbd.ApiClient(configuration) as api_client:
                 if drive.is_home_offense:
                     home_team = drive.offense
                     away_team = drive.defense
+                    home_score = drive.end_offense_score
+                    away_score = drive.end_defense_score
                 else:
                     home_team = drive.defense
                     away_team = drive.offense
+                    home_score = drive.end_defense_score
+                    away_score = drive.end_offense_score
                 seven_teen_to_zero_game = SevenTeenToZeroGame(
                     home_team=home_team,
                     away_team=away_team,
-                    home_score=drive.end_offense_score,
-                    away_score=drive.end_defense_score,
+                    home_score=home_score,
+                    away_score=away_score,
                     game_id=drive.game_id
                 )
                 game_already_in_table = False
@@ -569,23 +573,27 @@ with open("lowest_scoring_d3_games_{}.txt".format(today), "w") as f:
 # Print games where 17-0 team lost
 with open("games_that_were_17_to_0_{}.txt".format(today), "w") as f:
     f.write ("*** The Most Dangerous Lead In College Football ***\n")
+    f.write ("Week {} of {} Season\n".format(week, year))
     f.write("Games that were 17-0:\n")
-    for i, game in enumerate(games_that_were_17_to_0):
+    j = 0
+    for _, game in enumerate(games_that_were_17_to_0):
         if game.seventeen_zero_team_lost:
+            j += 1
             if game.home_score > game.away_score:
-                f.write(f"{i+1}. {game.home_team} vs {game.away_team}: {game.home_score}-{game.away_score}, {game.home_team} lost {game.away_final_score} - {game.home_final_score}\n")
+                f.write(f"{j}. {game.home_team} vs {game.away_team}: {game.home_score}-{game.away_score}, {game.home_team} lost {game.away_final_score} - {game.home_final_score}\n")
             else:
-                f.write(f"{i+1}. {game.home_team} vs {game.away_team}: {game.home_score}-{game.away_score}, {game.away_team} lost {game.home_final_score} - {game.away_final_score}\n")
+                f.write(f"{j}. {game.home_team} vs {game.away_team}: {game.home_score}-{game.away_score}, {game.away_team} lost {game.home_final_score} - {game.away_final_score}\n")
 
     f.write("\n =================================================== \n\n")
     f.write ("Teams that survived:\n")
-    for i, game in enumerate(games_that_were_17_to_0):
+    j = 0
+    for _, game in enumerate(games_that_were_17_to_0):
         if not game.seventeen_zero_team_lost:
+            j += 1
             if game.home_score > game.away_score:
-                f.write(f"{i+1}. {game.home_team} vs {game.away_team}: {game.home_score}-{game.away_score}, {game.home_team} survived with a win of {game.home_final_score} - {game.away_final_score}\n")
+                f.write(f"{j}. {game.home_team} vs {game.away_team}: {game.home_score}-{game.away_score}, {game.home_team} survived with a win of {game.home_final_score} - {game.away_final_score}\n")
             else:
-                f.write(f"{i+1}. {game.home_team} vs {game.away_team}: {game.home_score}-{game.away_score}, {game.away_team} survived with a win of {game.away_final_score} - {game.home_final_score}\n")
-
+                f.write(f"{j}. {game.home_team} vs {game.away_team}: {game.home_score}-{game.away_score}, {game.away_team} survived with a win of {game.away_final_score} - {game.home_final_score}\n")
 
 # Send each file to discord via webhook
 for filename in ["scoring_drives_{}.txt", "non_scoring_drives_{}.txt", "longest_punts_{}.txt", "safeties_{}.txt", "field_goals_{}.txt", "spinach_teams_of_the_week_{}.txt", "highest_scoring_fbs_games_{}.txt", "lowest_scoring_fbs_games_{}.txt", "highest_scoring_fcs_games_{}.txt", "lowest_scoring_fcs_games_{}.txt", "highest_scoring_d2_games_{}.txt", "lowest_scoring_d2_games_{}.txt", "highest_scoring_d3_games_{}.txt", "lowest_scoring_d3_games_{}.txt", "games_that_were_17_to_0_{}.txt"]:
