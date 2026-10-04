@@ -574,7 +574,7 @@ with open("lowest_scoring_d3_games_{}.txt".format(today), "w") as f:
 with open("games_that_were_17_to_0_{}.txt".format(today), "w") as f:
     f.write ("*** The Most Dangerous Lead In College Football ***\n")
     f.write ("Week {} of {} Season\n".format(week, year))
-    f.write("Games that were 17-0:\n")
+    f.write("Teams that were 17-0 and lost:\n")
     j = 0
     for _, game in enumerate(games_that_were_17_to_0):
         if game.seventeen_zero_team_lost:
