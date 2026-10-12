@@ -41,6 +41,8 @@ webhook_url = secret_discord_webhook
 @dataclass
 class Drive:
     drive_id: str
+    quarter: int
+    clock_time: str
     offense_team: str
     defense_team: str
     result: str
@@ -255,6 +257,8 @@ with cfbd.ApiClient(configuration) as api_client:
             for play in plays_response:
                 if play.drive_id == drive.drive_id and play.scoring:
                     drive.final_play_text = play.play_text
+                    drive.quarter=play.period,
+                    drive.clock_time=f"{play.clock.minutes}:{str(play.clock.seconds).zfill(2)}",
         except Exception as e:
             label = "Scoop and Score" if drive in scoops_and_scores else "Pick Six"
             print(f"Exception when calling PlaysApi for {label} final play text->get_plays: {e}\n")
@@ -572,7 +576,7 @@ write_report(
     f"scoops_and_scores_{today}.txt",
     "Scoop and Score Plays:",
     [
-        f"{i+1}. Offense: {drive.offense_team}, Defense: {drive.defense_team}, Time: {drive.minutes}:{drive.seconds:02d}, Final Play: {drive.final_play_text}\n"
+        f"{i+1}. Offense: {drive.offense_team}, Defense: {drive.defense_team}, Quarter: {drive.quarter}, Clock: {drive.clock_time}, Final Play: {drive.final_play_text}\n"
         for i, drive in enumerate(scoops_and_scores)
     ],
 )
@@ -581,7 +585,7 @@ write_report(
     f"pick_sixes_{today}.txt",
     "Pick Six Plays:",
     [
-        f"{i+1}. Offense: {drive.offense_team}, Defense: {drive.defense_team}, Time: {drive.minutes}:{drive.seconds:02d}, Final Play: {drive.final_play_text}\n"
+        f"{i+1}. Offense: {drive.offense_team}, Defense: {drive.defense_team}, Quarter: {drive.quarter}, Clock: {drive.clock_time}, Final Play: {drive.final_play_text}\n"
         for i, drive in enumerate(pick_sixes)
     ],
 )
