@@ -4,7 +4,13 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-import cfbd
+from cfbd.api.drives_api import DrivesApi
+from cfbd.api.games_api import GamesApi
+from cfbd.api.plays_api import PlaysApi
+from cfbd.api.stats_api import StatsApi
+from cfbd.api_client import ApiClient
+from cfbd.configuration import Configuration
+from cfbd.models.division_classification import DivisionClassification
 import requests
 from dotenv import load_dotenv
 
@@ -31,7 +37,7 @@ if not secret_access_token:
 if not secret_discord_webhook:
     raise RuntimeError("Missing Discord webhook. Set DISCORD_WEBHOOK (or discord_webhook) as a GitHub Actions secret.")
 
-configuration = cfbd.Configuration(
+configuration = Configuration(
     host=secret_host,
     access_token=secret_access_token,
 )
@@ -104,6 +110,48 @@ class SeventeenToZeroGame:
     home_final_score: int = 0
     away_final_score: int = 0
 
+@dataclass
+class PunterStats:
+    year: int
+    team: str
+    conference: str
+    player_name: str
+    position: str
+    number_of_punts: int
+    total_punt_yards: int
+    yards_per_punt: float
+    longest_punt: int
+    punts_inside_20: int
+    touchbacks: int
+
+@dataclass
+class PassingStats:
+    year: int
+    team: str
+    conference: str
+    player_name: str
+    position: str
+    passing_attempts: int
+    passing_completions: int
+    passing_yards: int
+    passing_touchdowns: int
+    passing_interceptions: int
+    passing_percentage: float
+    passing_yards_per_attempt: float
+
+@dataclass
+class RushingStats:
+    year: int
+    team: str
+    conference: str
+    player_name: str
+    position: str
+    rushing_carries: int
+    rushing_long: int
+    rushing_touchdowns: int
+    rushing_yards: int
+    rushing_yards_per_carry: float
+
 
 scoring_drives = []
 non_scoring_drives = []
@@ -114,6 +162,10 @@ spinach_teams = []
 games_that_were_17_to_0 = []
 scoops_and_scores = []
 pick_sixes = []
+qb_punts = []
+other_punts = []
+non_qb_passes = []
+non_rusher_rushes = []
 
 fbs_games = []
 fcs_games = []
@@ -122,8 +174,8 @@ d3_games = []
 
 today = time.strftime("%Y-%m-%d")
 
-year_raw = first_env("YEAR", "year")
-week_raw = first_env("WEEK", "week", "CFBD_WEEK")
+year_raw = "2026"  # first_env("YEAR", "year")
+week_raw = "6" # first_env("WEEK", "week", "CFBD_WEEK")
 
 if year_raw is None or week_raw is None:
     raise RuntimeError("Missing YEAR and WEEK environment variables. cron-job.org must send both values for each run.")
@@ -169,13 +221,14 @@ def add_17_to_0_game(drive):
         games_that_were_17_to_0.append(candidate)
 
 
-with cfbd.ApiClient(configuration) as api_client:
-    api_instance = cfbd.DrivesApi(api_client)
-    plays_api = cfbd.PlaysApi(api_client)
-    games_api = cfbd.GamesApi(api_client)
+with ApiClient(configuration) as api_client:
+    drives_api = DrivesApi(api_client)
+    plays_api = PlaysApi(api_client)
+    games_api = GamesApi(api_client)
+    stats_api = StatsApi(api_client)
 
     try:
-        api_response = api_instance.get_drives(year, week=week)
+        api_response = drives_api.get_drives(year, week=week)
         for drive in api_response:
             result = drive.drive_result
             scoring = result in ["TD", "FG"]
@@ -186,9 +239,11 @@ with cfbd.ApiClient(configuration) as api_client:
                 result=result,
                 plays=drive.plays,
                 yards=drive.yards,
-                minutes=drive.elapsed.minutes,
-                seconds=drive.elapsed.seconds,
+                minutes=drive.elapsed.minutes or 0,
+                seconds=drive.elapsed.seconds or 0,
                 scoring=scoring,
+                quarter=drive.start_period,
+                clock_time=f"{drive.start_time.minutes}:{str(drive.start_time.seconds).zfill(2)}"
             )
 
             if result == "FUMBLE TD":
@@ -217,7 +272,7 @@ with cfbd.ApiClient(configuration) as api_client:
                     punter_name=punter_name,
                     punter_number=punter_number,
                     punt_distance=punt_distance,
-                    play_text=punt.play_text,
+                    play_text=punt.play_text or "",
                 )
             )
     except Exception as e:
@@ -231,7 +286,7 @@ with cfbd.ApiClient(configuration) as api_client:
                     defense=safety.defense,
                     quarter=safety.period,
                     time=f"{safety.clock.minutes}:{str(safety.clock.seconds).zfill(2)}",
-                    play_text=safety.play_text,
+                    play_text=safety.play_text or "",
                 )
             )
     except Exception as e:
@@ -244,7 +299,7 @@ with cfbd.ApiClient(configuration) as api_client:
                 defense=field_goal.defense,
                 quarter=field_goal.period,
                 time=f"{field_goal.clock.minutes}:{str(field_goal.clock.seconds).zfill(2)}",
-                play_text=field_goal.play_text,
+                play_text=field_goal.play_text or "",
             )
             play.yards_gained = field_goal.yards_gained
             field_goals.append(play)
@@ -264,7 +319,9 @@ with cfbd.ApiClient(configuration) as api_client:
             print(f"Exception when calling PlaysApi for {label} final play text->get_plays: {e}\n")
 
     try:
-        for team_stat in games_api.get_game_team_stats(year, week=week, classification="fbs"):
+        for team_stat in games_api.get_game_team_stats(
+            year, week=week, classification=DivisionClassification("fbs")
+        ):
             home_team = TeamStats()
             away_team = TeamStats()
 
@@ -298,7 +355,9 @@ with cfbd.ApiClient(configuration) as api_client:
         print(f"Exception when calling TeamsApi for Team Stats->get_team_stats: {e}\n")
 
     try:
-        for team_stat in games_api.get_game_team_stats(year, week=week, classification="fcs"):
+        for team_stat in games_api.get_game_team_stats(
+            year, week=week, classification=DivisionClassification("fcs")
+        ):
             home_team = TeamStats()
             away_team = TeamStats()
 
@@ -331,42 +390,254 @@ with cfbd.ApiClient(configuration) as api_client:
         print(f"Exception when calling TeamsApi for Team Stats->get_team_stats: {e}\n")
 
     for classification, result_list in (
-        ("fbs", fbs_games),
-        ("fcs", fcs_games),
-        ("ii", d2_games),
-        ("iii", d3_games),
+        (DivisionClassification("fbs"), fbs_games),
+        (DivisionClassification("fcs"), fcs_games),
+        (DivisionClassification("ii"), d2_games),
+        (DivisionClassification("iii"), d3_games),
     ):
         try:
             for game in games_api.get_games(year, week=week, classification=classification):
+                if game.home_points is None or game.away_points is None:
+                    continue
+
                 game_record = Game(
                     home_team=game.home_team,
                     away_team=game.away_team,
                     home_score=game.home_points,
                     away_score=game.away_points,
                 )
-                if game_record.home_score is not None and game_record.away_score is not None:
-                    result_list.append(game_record)
+                result_list.append(game_record)
         except Exception as e:
             print(f"Exception when calling GamesApi for {classification} Games->get_games: {e}\n")
 
-for game in games_that_were_17_to_0:
-    try:
-        game_data = games_api.get_games(year, week=week, id=game.game_id)
-        for result in game_data:
-            game.home_final_score = result.home_points
-            game.away_final_score = result.away_points
-            if game.home_score > game.away_score:
-                game.seventeen_zero_team_lost = result.home_points < result.away_points
-            elif game.away_score > game.home_score:
-                game.seventeen_zero_team_lost = result.away_points < result.home_points
-    except Exception as e:
-        print(f"Exception when calling GamesApi for 17-0 Games->get_games: {e}\n")
+    for game in games_that_were_17_to_0:
+        try:
+            game_data = games_api.get_games(year, week=week, id=game.game_id)
+            for result in game_data:
+                if result.home_points is None or result.away_points is None:
+                    continue
 
+                game.home_final_score = result.home_points
+                game.away_final_score = result.away_points
+                if game.home_score > game.away_score:
+                    game.seventeen_zero_team_lost = result.home_points < result.away_points
+                elif game.away_score > game.home_score:
+                    game.seventeen_zero_team_lost = result.away_points < result.home_points
+        except Exception as e:
+            print(f"Exception when calling GamesApi for 17-0 Games->get_games: {e}\n")
+
+    try:
+        for punt_stat in stats_api.get_player_season_stats(year, category="punting"):
+            if punt_stat.position in ["P", "PK"]:
+                continue # Skip punters and kickers
+            elif punt_stat.position == "QB":
+                match = next(
+                    (
+                        stat
+                        for stat in qb_punts
+                        if stat.year == year
+                        and stat.team == punt_stat.team
+                        and stat.player_name == punt_stat.player
+                        and stat.position == punt_stat.position
+                    ),
+                    None,
+                )
+
+                if match is not None:
+                    if punt_stat.stat_type == "NO":
+                        match.number_of_punts = int(punt_stat.stat)
+                    elif punt_stat.stat_type == "In 20":
+                        match.punts_inside_20 = int(punt_stat.stat)
+                    elif punt_stat.stat_type == "LONG":
+                        match.longest_punt = int(punt_stat.stat)
+                    elif punt_stat.stat_type == "TB":
+                        match.touchbacks = int(punt_stat.stat)
+                    elif punt_stat.stat_type == "YDS":
+                        match.total_punt_yards = int(punt_stat.stat)
+                    elif punt_stat.stat_type == "YPP":
+                        match.yards_per_punt = float(punt_stat.stat)
+                else:
+                    qb_punts.append(
+                        PunterStats(
+                            year=year,
+                            team=punt_stat.team,
+                            conference=punt_stat.conference,
+                            player_name=punt_stat.player,
+                            position=punt_stat.position,
+                            number_of_punts=int(punt_stat.stat) if punt_stat.stat_type == "NO" else 0,
+                            total_punt_yards=int(punt_stat.stat) if punt_stat.stat_type == "YDS" else 0,
+                            yards_per_punt=float(punt_stat.stat) if punt_stat.stat_type == "YPP" else 0.0,
+                            longest_punt=int(punt_stat.stat) if punt_stat.stat_type == "LONG" else 0,
+                            punts_inside_20=int(punt_stat.stat) if punt_stat.stat_type == "In 20" else 0,
+                            touchbacks=int(punt_stat.stat) if punt_stat.stat_type == "TB" else 0,
+                        )
+                    )
+            else:
+                match = next(
+                    (
+                        stat
+                        for stat in other_punts
+                        if stat.year == year
+                        and stat.team == punt_stat.team
+                        and stat.player_name == punt_stat.player
+                        and stat.position == punt_stat.position
+                    ),
+                    None,
+                )
+
+                if match is not None:
+                    if punt_stat.stat_type == "NO":
+                        match.number_of_punts = int(punt_stat.stat)
+                    elif punt_stat.stat_type == "In 20":
+                        match.punts_inside_20 = int(punt_stat.stat)
+                    elif punt_stat.stat_type == "LONG":
+                        match.longest_punt = int(punt_stat.stat)
+                    elif punt_stat.stat_type == "TB":
+                        match.touchbacks = int(punt_stat.stat)
+                    elif punt_stat.stat_type == "YDS":
+                        match.total_punt_yards = int(punt_stat.stat)
+                    elif punt_stat.stat_type == "YPP":
+                        match.yards_per_punt = float(punt_stat.stat)
+                else:
+                    other_punts.append(
+                        PunterStats(
+                            year=year,
+                            team=punt_stat.team,
+                            conference=punt_stat.conference,
+                            player_name=punt_stat.player,
+                            position=punt_stat.position,
+                            number_of_punts=int(punt_stat.stat) if punt_stat.stat_type == "NO" else 0,
+                            total_punt_yards=int(punt_stat.stat) if punt_stat.stat_type == "YDS" else 0,
+                            yards_per_punt=float(punt_stat.stat) if punt_stat.stat_type == "YPP" else 0.0,
+                            longest_punt=int(punt_stat.stat) if punt_stat.stat_type == "LONG" else 0,
+                            punts_inside_20=int(punt_stat.stat) if punt_stat.stat_type == "In 20" else 0,
+                            touchbacks=int(punt_stat.stat) if punt_stat.stat_type == "TB" else 0,
+                        )
+                    )
+
+    except Exception as e:
+         print(f"Exception when calling StatsApi for Punting Stats->get_player_season_stats: {e}\n")
+
+    try:
+        for pass_stat in stats_api.get_player_season_stats(year, category="passing"):
+            if pass_stat.position != "QB":
+                match = next(
+                    (
+                        player_stats
+                        for player_stats in non_qb_passes
+                        if player_stats.year == year
+                        and player_stats.team == pass_stat.team
+                        and player_stats.player_name == pass_stat.player
+                        and player_stats.position == pass_stat.position
+                    ),
+                    None,
+                )
+
+                if match is not None:
+                    if pass_stat.stat_type == "ATT":
+                        match.passing_attempts = int(pass_stat.stat)
+                    elif pass_stat.stat_type == "COMPLETIONS":
+                        match.passing_completions = int(pass_stat.stat)
+                    elif pass_stat.stat_type == "YDS":
+                        match.passing_yards = int(pass_stat.stat)
+                    elif pass_stat.stat_type == "TD":
+                        match.passing_touchdowns = int(pass_stat.stat)
+                    elif pass_stat.stat_type == "INT":
+                        match.passing_interceptions = int(pass_stat.stat)
+                    elif pass_stat.stat_type == "PCT":
+                        match.passing_percentage = float(pass_stat.stat)
+                    elif pass_stat.stat_type == "YPA":
+                        match.passing_yards_per_attempt = float(pass_stat.stat)
+                else:
+                    non_qb_passes.append(
+                        PassingStats(
+                            year=year,
+                            team=pass_stat.team,
+                            conference=pass_stat.conference,
+                            player_name=pass_stat.player,
+                            position=pass_stat.position,
+                            passing_attempts=int(pass_stat.stat) if pass_stat.stat_type == "ATT" else 0,
+                            passing_completions=int(pass_stat.stat) if pass_stat.stat_type == "COMPLETIONS" else 0,
+                            passing_yards=int(pass_stat.stat) if pass_stat.stat_type == "YDS" else 0,
+                            passing_touchdowns=int(pass_stat.stat) if pass_stat.stat_type == "TD" else 0,
+                            passing_interceptions=int(pass_stat.stat) if pass_stat.stat_type == "INT" else 0,
+                            passing_percentage=float(pass_stat.stat) if pass_stat.stat_type == "PCT" else 0.0,
+                            passing_yards_per_attempt=float(pass_stat.stat) if pass_stat.stat_type == "YPA" else 0.0,
+                        )
+                    )
+    except Exception as e:
+        print(f"Exception when calling StatsApi for Passing Stats->get_player_season_stats: {e}\n")
+
+    try:
+        for rush_stat in stats_api.get_player_season_stats(year, category="rushing"):
+            if rush_stat.position not in ["RB", "QB"]:
+                match = next(
+                    (
+                        stat
+                        for stat in non_rusher_rushes
+                        if stat.year == year
+                        and stat.team == rush_stat.team
+                        and stat.player_name == rush_stat.player
+                        and stat.position == rush_stat.position
+                    ),
+                    None,
+                )
+
+                if match is not None:
+                    if rush_stat.stat_type == "CAR":
+                        match.rushing_carries = int(rush_stat.stat)
+                    elif rush_stat.stat_type == "LONG":
+                        match.rushing_long = int(rush_stat.stat)
+                    elif rush_stat.stat_type == "TD":
+                        match.rushing_touchdowns = int(rush_stat.stat)
+                    elif rush_stat.stat_type == "YDS":
+                        match.rushing_yards = int(rush_stat.stat)
+                    elif rush_stat.stat_type == "YPC":
+                        match.rushing_yards_per_carry = float(rush_stat.stat)
+                else:
+                    non_rusher_rushes.append(
+                        RushingStats(
+                            year=year,
+                            team=rush_stat.team,
+                            conference=rush_stat.conference,
+                            player_name=rush_stat.player,
+                            position=rush_stat.position,
+                            rushing_carries=int(rush_stat.stat) if rush_stat.stat_type == "CAR" else 0,
+                            rushing_long=int(rush_stat.stat) if rush_stat.stat_type == "LONG" else 0,
+                            rushing_touchdowns=int(rush_stat.stat) if rush_stat.stat_type == "TD" else 0,
+                            rushing_yards=int(rush_stat.stat) if rush_stat.stat_type == "YDS" else 0,
+                            rushing_yards_per_carry=float(rush_stat.stat) if rush_stat.stat_type == "YPC" else 0.0,
+                        )
+                    )
+    except Exception as e:
+        print(f"Exception when calling StatsApi for Rushing Stats->get_player_season_stats: {e}\n")
+
+                
 
 ###################### REPORTING ######################
 
 longest_scoring_drives = sorted(scoring_drives, key=lambda x: (x.minutes, x.seconds), reverse=True)
 longest_non_scoring_drives = sorted(non_scoring_drives, key=lambda x: (x.minutes, x.seconds), reverse=True)
+most_qb_punts = sorted(
+    qb_punts,
+    key=lambda punt: (punt.number_of_punts, punt.total_punt_yards),
+    reverse=True,
+)
+most_other_punts = sorted(
+    other_punts, 
+    key=lambda punt: (punt.number_of_punts, punt.total_punt_yards),
+    reverse=True
+)
+most_non_qb_passes = sorted(
+    (passer for passer in non_qb_passes if passer.passing_attempts > 0),
+    key=lambda passer: (passer.passing_attempts, passer.passing_yards),
+    reverse=True,
+)
+most_non_rusher_rushes = sorted(
+    (rusher for rusher in non_rusher_rushes if rusher.rushing_carries > 0),
+    key=lambda rusher: (rusher.rushing_carries, rusher.rushing_yards),
+    reverse=True
+)
 
 try:
     for drive in longest_scoring_drives[:10]:
@@ -376,7 +647,7 @@ try:
             if play.drive_id == drive.drive_id:
                 if play.play_type == "Timeout":
                     continue
-                if play.play_number > max_play_number:
+                if play.play_number is not None and play.play_number > max_play_number:
                     max_play_number = play.play_number
                     drive.final_play_text = play.play_text
 
@@ -387,7 +658,7 @@ try:
             if play.drive_id == drive.drive_id:
                 if play.play_type == "Timeout":
                     continue
-                if play.play_number > max_play_number:
+                if play.play_number is not None and play.play_number > max_play_number:
                     max_play_number = play.play_number
                     drive.final_play_text = play.play_text
 except Exception as e:
@@ -590,32 +861,73 @@ write_report(
     ],
 )
 
-for filename in [
-    f"scoring_drives_{today}.txt",
-    f"non_scoring_drives_{today}.txt",
-    f"longest_punts_{today}.txt",
-    f"safeties_{today}.txt",
-    f"field_goals_{today}.txt",
-    f"spinach_teams_of_the_week_{today}.txt",
-    f"highest_scoring_fbs_games_{today}.txt",
-    f"lowest_scoring_fbs_games_{today}.txt",
-    f"highest_scoring_fcs_games_{today}.txt",
-    f"lowest_scoring_fcs_games_{today}.txt",
-    f"highest_scoring_d2_games_{today}.txt",
-    f"lowest_scoring_d2_games_{today}.txt",
-    f"highest_scoring_d3_games_{today}.txt",
-    f"lowest_scoring_d3_games_{today}.txt",
-    f"games_that_were_17_to_0_{today}.txt",
-    f"scoops_and_scores_{today}.txt",
-    f"pick_sixes_{today}.txt",
-]:
-    with open(filename, "rb") as file_handle:
-        file_data = file_handle.read()
-        response = requests.post(
-            webhook_url,
-            files={"file": (filename, file_data)},
-        )
-        if response.status_code in (200, 204):
-            print(f"Successfully sent {filename} to Discord.")
-        else:
-            print(f"Failed to send {filename} to Discord. Status code: {response.status_code}")
+write_report(
+    f"qb_punts_{today}.txt",
+    "Quarterback Punting Stats:",
+    [
+        f"{i+1}. Team: {punt.team}, Conference: {punt.conference}, Player: {punt.player_name}, Position: {punt.position}, Punts: {punt.number_of_punts}, Total Yards: {punt.total_punt_yards}, Yards per Punt: {punt.yards_per_punt:.2f}, Longest Punt: {punt.longest_punt}, Punts Inside 20: {punt.punts_inside_20}, Touchbacks: {punt.touchbacks}\n"
+        for i, punt in enumerate(most_qb_punts)
+    ],
+)
+
+if len(most_other_punts) > 0:
+    write_report(
+        f"other_punts_{today}.txt",
+        "Other Punting Stats:",
+        [
+            f"{i+1}. Team: {punt.team}, Conference: {punt.conference}, Player: {punt.player_name}, Position: {punt.position}, Punts: {punt.number_of_punts}, Total Yards: {punt.total_punt_yards}, Yards per Punt: {punt.yards_per_punt:.2f}, Longest Punt: {punt.longest_punt}, Punts Inside 20: {punt.punts_inside_20}, Touchbacks: {punt.touchbacks}\n"
+            for i, punt in enumerate(most_other_punts)
+        ],
+    )
+
+write_report(
+    f"non_qb_passes_{today}.txt",
+    "Non-QB Passing Stats:",
+    [
+        f"{i+1}. Team: {passer.team}, Conference: {passer.conference}, Player: {passer.player_name}, Position: {passer.position}, Attempts: {passer.passing_attempts}, Completions: {passer.passing_completions}, Yards: {passer.passing_yards}, Touchdowns: {passer.passing_touchdowns}, Interceptions: {passer.passing_interceptions}, Completion %: {passer.passing_percentage:.2f}, Yards per Attempt: {passer.passing_yards_per_attempt:.2f}\n"
+        for i, passer in enumerate(most_non_qb_passes)
+    ],
+)
+
+write_report(
+    f"non_rusher_rushes_{today}.txt",
+    "Non-Rusher Rushing Stats:",
+    [
+        f"{i+1}. Team: {rusher.team}, Conference: {rusher.conference}, Player: {rusher.player_name}, Position: {rusher.position}, Carries: {rusher.rushing_carries}, Yards: {rusher.rushing_yards}, Touchdowns: {rusher.rushing_touchdowns}, Longest Rush: {rusher.rushing_long}, Yards per Carry: {rusher.rushing_yards_per_carry:.2f}\n"
+        for i, rusher in enumerate(most_non_rusher_rushes)
+    ],
+)
+
+#for filename in [
+#    f"scoring_drives_{today}.txt",
+#    f"non_scoring_drives_{today}.txt",
+#    f"longest_punts_{today}.txt",
+#    f"safeties_{today}.txt",
+#    f"field_goals_{today}.txt",
+#    f"spinach_teams_of_the_week_{today}.txt",
+#    f"highest_scoring_fbs_games_{today}.txt",
+#    f"lowest_scoring_fbs_games_{today}.txt",
+#    f"highest_scoring_fcs_games_{today}.txt",
+#    f"lowest_scoring_fcs_games_{today}.txt",
+#    f"highest_scoring_d2_games_{today}.txt",
+#    f"lowest_scoring_d2_games_{today}.txt",
+#    f"highest_scoring_d3_games_{today}.txt",
+#    f"lowest_scoring_d3_games_{today}.txt",
+#    f"games_that_were_17_to_0_{today}.txt",
+#    f"scoops_and_scores_{today}.txt",
+#    f"pick_sixes_{today}.txt"
+#    f"qb_punts_{today}.txt"
+#    f"other_punts_{today}.txt"
+#    f"non_qb_passes_{today}.txt"
+#    f"non_rusher_rushes_{today}.txt"
+#]:
+#    with open(filename, "rb") as file_handle:
+#        file_data = file_handle.read()
+#        response = requests.post(
+#            webhook_url,
+#            files={"file": (filename, file_data)},
+#        )
+#        if response.status_code in (200, 204):
+#            print(f"Successfully sent {filename} to Discord.")
+#        else:
+#            print(f"Failed to send {filename} to Discord. Status code: {response.status_code}")
