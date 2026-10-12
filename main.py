@@ -94,7 +94,7 @@ class Game:
         self.home_score = home_score
         self.away_score = away_score
 
-class SevenTeenToZeroGame:
+class SeventeenToZeroGame:
     def __init__(self, home_team, away_team, home_score, away_score, game_id):
         self.home_team = home_team
         self.away_team = away_team
@@ -185,7 +185,7 @@ with cfbd.ApiClient(configuration) as api_client:
                     away_team = drive.offense
                     home_score = drive.end_defense_score
                     away_score = drive.end_offense_score
-                seven_teen_to_zero_game = SevenTeenToZeroGame(
+                seventeen_to_zero_game = SeventeenToZeroGame(
                     home_team=home_team,
                     away_team=away_team,
                     home_score=home_score,
@@ -194,12 +194,12 @@ with cfbd.ApiClient(configuration) as api_client:
                 )
                 game_already_in_table = False
                 for game in games_that_were_17_to_0:
-                    if game.game_id == seven_teen_to_zero_game.game_id:
+                    if game.game_id == seventeen_to_zero_game.game_id:
                         game_already_in_table = True
                         break
                     
                 if not game_already_in_table:
-                    games_that_were_17_to_0.append(seven_teen_to_zero_game)
+                    games_that_were_17_to_0.append(seventeen_to_zero_game)
             elif drive.end_offense_score == 0 and drive.end_defense_score == 17:
                 if drive.is_home_offense:
                     home_team = drive.offense
@@ -211,7 +211,7 @@ with cfbd.ApiClient(configuration) as api_client:
                     away_team = drive.offense
                     home_score = drive.end_defense_score
                     away_score = drive.end_offense_score
-                seven_teen_to_zero_game = SevenTeenToZeroGame(
+                seventeen_to_zero_game = SeventeenToZeroGame(
                     home_team=home_team,
                     away_team=away_team,
                     home_score=home_score,
@@ -220,12 +220,12 @@ with cfbd.ApiClient(configuration) as api_client:
                 )
                 game_already_in_table = False
                 for game in games_that_were_17_to_0:
-                    if game.game_id == seven_teen_to_zero_game.game_id:
+                    if game.game_id == seventeen_to_zero_game.game_id:
                         game_already_in_table = True
                         break
                     
                 if not game_already_in_table:
-                    games_that_were_17_to_0.append(seven_teen_to_zero_game)
+                    games_that_were_17_to_0.append(seventeen_to_zero_game)
 
             ##################
             # End 17-0 Games #
