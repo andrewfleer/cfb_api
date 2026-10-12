@@ -113,6 +113,8 @@ safeties = []
 field_goals = []
 spinach_teams = []
 games_that_were_17_to_0 = []
+scoops_and_scores = []
+pick_sixes = []
 
 fbs_games = []
 fcs_games = []
@@ -160,10 +162,18 @@ with cfbd.ApiClient(configuration) as api_client:
                 seconds=drive.elapsed.seconds,
                 scoring = scoring
             )
+            if result == "FUMBLE TD":
+                scoops_and_scores.append(drive_results)
+            elif result == "INT TD":
+                pick_sixes.append(drive_results)
             if scoring:
                 scoring_drives.append(drive_results)
             else:
                 non_scoring_drives.append(drive_results)
+
+            ##############
+            # 17-0 Games #
+            ##############
             if drive.end_offense_score == 17 and drive.end_defense_score == 0:
                 if drive.is_home_offense:
                     home_team = drive.offense
@@ -190,7 +200,37 @@ with cfbd.ApiClient(configuration) as api_client:
                     
                 if not game_already_in_table:
                     games_that_were_17_to_0.append(seven_teen_to_zero_game)
-           # print(f"Drive ID: {drive.drive_id}, Team: {drive.offense_team}, Result: {drive.result}, Plays: {len(drive.plays)}")
+            elif drive.end_offense_score == 0 and drive.end_defense_score == 17:
+                if drive.is_home_offense:
+                    home_team = drive.offense
+                    away_team = drive.defense
+                    home_score = drive.end_offense_score
+                    away_score = drive.end_defense_score
+                else:
+                    home_team = drive.defense
+                    away_team = drive.offense
+                    home_score = drive.end_defense_score
+                    away_score = drive.end_offense_score
+                seven_teen_to_zero_game = SevenTeenToZeroGame(
+                    home_team=home_team,
+                    away_team=away_team,
+                    home_score=home_score,
+                    away_score=away_score,
+                    game_id=drive.game_id
+                )
+                game_already_in_table = False
+                for game in games_that_were_17_to_0:
+                    if game.game_id == seven_teen_to_zero_game.game_id:
+                        game_already_in_table = True
+                        break
+                    
+                if not game_already_in_table:
+                    games_that_were_17_to_0.append(seven_teen_to_zero_game)
+
+            ##################
+            # End 17-0 Games #
+            ##################
+
     except Exception as e:
         print("Exception when calling DrivesApi->get_drives: %s\n" % e)
 
@@ -275,6 +315,33 @@ with cfbd.ApiClient(configuration) as api_client:
     except Exception as e:
         print("Exception when calling PlaysApi for Field Goals->get_plays: %s\n" % e)
 
+
+
+    ##############################
+    # Find Scoop And Score Plays #
+    ##############################
+    for drive in scoops_and_scores:
+        try:
+            plays_response = plays_api.get_plays(year, week=week, defense=drive.defense_team)
+            for play in plays_response:
+                if play.drive_id == drive.drive_id:
+                    if play.scoring == True:
+                        drive.final_play_text = play.play_text
+        except Exception as e:
+            print("Exception when calling PlaysApi for Scoop and Score final play text->get_plays: %s\n" % e)
+
+    #######################
+    # Find Pick Six Plays #
+    #######################
+    for drive in pick_sixes:
+        try:
+            plays_response = plays_api.get_plays(year, week=week, defense=drive.defense_team)
+            for play in plays_response:
+                if play.drive_id == drive.drive_id:
+                    if play.scoring == True:
+                        drive.final_play_text = play.play_text
+        except Exception as e:
+            print("Exception when calling PlaysApi for Pick Six final play text->get_plays: %s\n" % e)
 
     #Spinach Teams of the Week
     games_api = cfbd.GamesApi(api_client)
@@ -595,8 +662,20 @@ with open("games_that_were_17_to_0_{}.txt".format(today), "w") as f:
             else:
                 f.write(f"{j}. {game.home_team} vs {game.away_team}: {game.home_score}-{game.away_score}, {game.away_team} survived with a win of {game.away_final_score} - {game.home_final_score}\n")
 
+# Print scoops and scores
+with open("scoops_and_scores_{}.txt".format(today), "w") as f:
+    f.write("Scoop and Score Plays:\n")
+    for i, drive in enumerate(scoops_and_scores):
+        f.write(f"{i+1}. Offense: {drive.offense_team}, Defense: {drive.defense_team}, Time: {drive.minutes}:{drive.seconds:02d}, Final Play: {drive.final_play_text}\n")
+
+# Print pick sixes
+with open("pick_sixes_{}.txt".format(today), "w") as f:
+    f.write("Pick Six Plays:\n")
+    for i, drive in enumerate(pick_sixes):
+        f.write(f"{i+1}. Offense: {drive.offense_team}, Defense: {drive.defense_team}, Time: {drive.minutes}:{drive.seconds:02d}, Final Play: {drive.final_play_text}\n")
+
 # Send each file to discord via webhook
-for filename in ["scoring_drives_{}.txt", "non_scoring_drives_{}.txt", "longest_punts_{}.txt", "safeties_{}.txt", "field_goals_{}.txt", "spinach_teams_of_the_week_{}.txt", "highest_scoring_fbs_games_{}.txt", "lowest_scoring_fbs_games_{}.txt", "highest_scoring_fcs_games_{}.txt", "lowest_scoring_fcs_games_{}.txt", "highest_scoring_d2_games_{}.txt", "lowest_scoring_d2_games_{}.txt", "highest_scoring_d3_games_{}.txt", "lowest_scoring_d3_games_{}.txt", "games_that_were_17_to_0_{}.txt"]:
+for filename in ["scoring_drives_{}.txt", "non_scoring_drives_{}.txt", "longest_punts_{}.txt", "safeties_{}.txt", "field_goals_{}.txt", "spinach_teams_of_the_week_{}.txt", "highest_scoring_fbs_games_{}.txt", "lowest_scoring_fbs_games_{}.txt", "highest_scoring_fcs_games_{}.txt", "lowest_scoring_fcs_games_{}.txt", "highest_scoring_d2_games_{}.txt", "lowest_scoring_d2_games_{}.txt", "highest_scoring_d3_games_{}.txt", "lowest_scoring_d3_games_{}.txt", "games_that_were_17_to_0_{}.txt", "scoops_and_scores_{}.txt", "pick_sixes_{}.txt"]:
     with open(filename.format(today), "rb") as f:
         file_data = f.read()
         response = requests.post(
