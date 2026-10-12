@@ -174,8 +174,8 @@ d3_games = []
 
 today = time.strftime("%Y-%m-%d")
 
-year_raw = "2026"  # first_env("YEAR", "year")
-week_raw = "6" # first_env("WEEK", "week", "CFBD_WEEK")
+year_raw = first_env("YEAR", "year")
+week_raw = first_env("WEEK", "week", "CFBD_WEEK")
 
 if year_raw is None or week_raw is None:
     raise RuntimeError("Missing YEAR and WEEK environment variables. cron-job.org must send both values for each run.")
@@ -701,13 +701,22 @@ write_report(
 )
 
 write_report(
-    f"shortest_punts_{today}.txt",
-    "10 Shortest Punts:",
+    f"punts_no_touchbacks_{today}.txt",
+    "10 Longest Punts Excluding Touchbacks:",
     [
-        f"{i+1}. Offense: {punt.offense}, Defense: {punt.defense}, Quarter: {punt.quarter}, Time: {punt.time}, Player: #{punt.punter_number} {punt.punter_name}, Punt Distance: {punt.punt_distance} yards, Play Text: {punt.play_text}\n"
-        for i, punt in enumerate(sorted(punts, key=lambda x: x.punt_distance)[:10])
+        f"{i+1}. Offense: {punt.offense}, Defense: {punt.defense}, Quarter: {punt.quarter}, Time: {punt.time}, Player: #{punt.punter_number} {punt.punter_name}, Punt Distance: {punt.punt_distance} yards\n"
+        for i, punt in enumerate(sorted((punt for punt in punts if "TOUCHBACK" not in punt.play_text.upper()), key=lambda punt: punt.punt_distance, reverse=True)[:10])
     ],
 )
+
+#write_report(
+#    f"shortest_punts_{today}.txt",
+#    "10 Shortest Punts:",
+#    [
+#        f"{i+1}. Offense: {punt.offense}, Defense: {punt.defense}, Quarter: {punt.quarter}, Time: {punt.time}, Player: #{punt.punter_number} {punt.punter_name}, Punt Distance: {punt.punt_distance} yards, Play Text: {punt.play_text}\n"
+#        for i, punt in enumerate(sorted(punts, key=lambda x: x.punt_distance)[:10])
+#    ],
+#)
 
 write_report(
     f"safeties_{today}.txt",
@@ -898,36 +907,37 @@ write_report(
     ],
 )
 
-#for filename in [
-#    f"scoring_drives_{today}.txt",
-#    f"non_scoring_drives_{today}.txt",
-#    f"longest_punts_{today}.txt",
-#    f"safeties_{today}.txt",
-#    f"field_goals_{today}.txt",
-#    f"spinach_teams_of_the_week_{today}.txt",
-#    f"highest_scoring_fbs_games_{today}.txt",
-#    f"lowest_scoring_fbs_games_{today}.txt",
-#    f"highest_scoring_fcs_games_{today}.txt",
-#    f"lowest_scoring_fcs_games_{today}.txt",
-#    f"highest_scoring_d2_games_{today}.txt",
-#    f"lowest_scoring_d2_games_{today}.txt",
-#    f"highest_scoring_d3_games_{today}.txt",
-#    f"lowest_scoring_d3_games_{today}.txt",
-#    f"games_that_were_17_to_0_{today}.txt",
-#    f"scoops_and_scores_{today}.txt",
-#    f"pick_sixes_{today}.txt"
-#    f"qb_punts_{today}.txt"
-#    f"other_punts_{today}.txt"
-#    f"non_qb_passes_{today}.txt"
-#    f"non_rusher_rushes_{today}.txt"
-#]:
-#    with open(filename, "rb") as file_handle:
-#        file_data = file_handle.read()
-#        response = requests.post(
-#            webhook_url,
-#            files={"file": (filename, file_data)},
-#        )
-#        if response.status_code in (200, 204):
-#            print(f"Successfully sent {filename} to Discord.")
-#        else:
-#            print(f"Failed to send {filename} to Discord. Status code: {response.status_code}")
+for filename in [
+    f"scoring_drives_{today}.txt",
+    f"non_scoring_drives_{today}.txt",
+    f"longest_punts_{today}.txt",
+    f"punts_no_touchbacks_{today}.txt",
+    f"safeties_{today}.txt",
+    f"field_goals_{today}.txt",
+    f"spinach_teams_of_the_week_{today}.txt",
+    f"highest_scoring_fbs_games_{today}.txt",
+    f"lowest_scoring_fbs_games_{today}.txt",
+    f"highest_scoring_fcs_games_{today}.txt",
+    f"lowest_scoring_fcs_games_{today}.txt",
+    f"highest_scoring_d2_games_{today}.txt",
+    f"lowest_scoring_d2_games_{today}.txt",
+    f"highest_scoring_d3_games_{today}.txt",
+    f"lowest_scoring_d3_games_{today}.txt",
+    f"games_that_were_17_to_0_{today}.txt",
+    f"scoops_and_scores_{today}.txt",
+    f"pick_sixes_{today}.txt"
+    f"qb_punts_{today}.txt"
+    f"other_punts_{today}.txt"
+    f"non_qb_passes_{today}.txt"
+    f"non_rusher_rushes_{today}.txt"
+]:
+    with open(filename, "rb") as file_handle:
+        file_data = file_handle.read()
+        response = requests.post(
+            webhook_url,
+            files={"file": (filename, file_data)},
+        )
+        if response.status_code in (200, 204):
+            print(f"Successfully sent {filename} to Discord.")
+        else:
+            print(f"Failed to send {filename} to Discord. Status code: {response.status_code}")
