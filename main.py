@@ -235,6 +235,60 @@ def build_turnover_games(game_team_stats):
     return games
 
 
+def build_spinach_teams(game_team_stats):
+    teams_with_high_yardage_share = []
+    for team_stat in game_team_stats:
+        home_team = TeamStats()
+        away_team = TeamStats()
+
+        for team in team_stat.teams:
+            total_yards = next(
+                (stat.stat for stat in team.stats if stat.category == "totalYards"), 0
+            )
+            if team.home_away == "home":
+                home_team.team = team.team
+                home_team.total_points = team.points
+                home_team.team_yards = int(total_yards)
+            elif team.home_away == "away":
+                away_team.team = team.team
+                away_team.total_points = team.points
+                away_team.team_yards = int(total_yards)
+
+        total_yards = home_team.team_yards + away_team.team_yards
+        home_team.total_yards = total_yards
+        away_team.total_yards = total_yards
+
+        if home_team.team_yards > 350 and home_team.team_yards > away_team.team_yards:
+            share_of_yards = home_team.team_yards / total_yards
+            home_team.spinach_yards = (
+                share_of_yards / home_team.total_points
+                if home_team.total_points > 0
+                else share_of_yards
+            )
+            teams_with_high_yardage_share.append(home_team)
+        elif away_team.team_yards > 350 and away_team.team_yards > home_team.team_yards:
+            share_of_yards = away_team.team_yards / total_yards
+            away_team.spinach_yards = (
+                share_of_yards / away_team.total_points
+                if away_team.total_points > 0
+                else share_of_yards
+            )
+            teams_with_high_yardage_share.append(away_team)
+
+    return teams_with_high_yardage_share
+
+
+def filter_game_team_stats_by_classification(
+    game_team_stats, games_by_id, classification
+):
+    return [
+        team_stat
+        for team_stat in game_team_stats
+        if (game := games_by_id.get(team_stat.id)) is not None
+        and classification in (game.home_classification, game.away_classification)
+    ]
+
+
 def add_17_to_0_game(drive):
     if drive.end_offense_score == 17 and drive.end_defense_score == 0:
         if drive.is_home_offense:
@@ -270,6 +324,7 @@ with ApiClient(configuration) as api_client:
     games_api = GamesApi(api_client)
     stats_api = StatsApi(api_client)
     top_turnover_games = None
+    weekly_game_team_stats = None
 
     print(f"Getting game data for year {year} - week {week}...")
     try:
@@ -294,12 +349,17 @@ with ApiClient(configuration) as api_client:
 
     print(f"Getting game stats data for year {year} - week {week}...")
     try:
-        turnover_game_stats = games_api.get_game_team_stats(year, week=week)
-        top_turnover_games = build_turnover_games(turnover_game_stats)
+        weekly_game_team_stats = games_api.get_game_team_stats(year, week=week)
     except Exception as e:
-        print(f"Exception when building Top Turnover Games report: {e}\n")
+        print(f"Exception when calling GamesApi->get_game_team_stats: {e}\n")
 
     games_by_id = {game.id: game for game in week_games}
+    if weekly_game_team_stats is not None:
+        try:
+            top_turnover_games = build_turnover_games(weekly_game_team_stats)
+        except Exception as e:
+            print(f"Exception when building Top Turnover Games report: {e}\n")
+
     plays_by_drive = {}
     for play in week_plays:
         drive_key = (play.game_id, play.drive_id)
@@ -404,78 +464,21 @@ with ApiClient(configuration) as api_client:
             label = "Scoop and Score" if drive in scoops_and_scores else "Pick Six"
             print(f"Exception when calling PlaysApi for {label} final play text->get_plays: {e}\n")
 
-    print("getting FBS spinach teams...")
-    try:
-        for team_stat in games_api.get_game_team_stats(
-            year, week=week, classification=DivisionClassification("fbs")
+    if weekly_game_team_stats is not None:
+        for classification in (
+            DivisionClassification("fbs"),
+            DivisionClassification("fcs"),
         ):
-            home_team = TeamStats()
-            away_team = TeamStats()
-
-            for team in team_stat.teams:
-                total_yards = next(
-                    (stat.stat for stat in team.stats if stat.category == "totalYards"), 0
+            print(f"Getting {classification} spinach teams...")
+            try:
+                classified_game_stats = filter_game_team_stats_by_classification(
+                    weekly_game_team_stats,
+                    games_by_id,
+                    classification,
                 )
-
-                if team.home_away == "home":
-                    home_team.team = team.team
-                    home_team.total_points = team.points
-                    home_team.team_yards = int(total_yards)
-                elif team.home_away == "away":
-                    away_team.team = team.team
-                    away_team.total_points = team.points
-                    away_team.team_yards = int(total_yards)
-
-            total_yards = home_team.team_yards + away_team.team_yards
-            home_team.total_yards = total_yards
-            away_team.total_yards = total_yards
-
-            if home_team.team_yards > 350 and home_team.team_yards > away_team.team_yards:
-                share_of_yards = home_team.team_yards / total_yards
-                home_team.spinach_yards = share_of_yards / home_team.total_points if home_team.total_points > 0 else share_of_yards
-                spinach_teams.append(home_team)
-            elif away_team.team_yards > 350 and away_team.team_yards > home_team.team_yards:
-                share_of_yards = away_team.team_yards / total_yards
-                away_team.spinach_yards = share_of_yards / away_team.total_points if away_team.total_points > 0 else share_of_yards
-                spinach_teams.append(away_team)
-    except Exception as e:
-        print(f"Exception when calling TeamsApi for Team Stats->get_team_stats: {e}\n")
-
-    print("Getting FCS spinach teams...")
-    try:
-        for team_stat in games_api.get_game_team_stats(
-            year, week=week, classification=DivisionClassification("fcs")
-        ):
-            home_team = TeamStats()
-            away_team = TeamStats()
-
-            for team in team_stat.teams:
-                total_yards = next(
-                    (stat.stat for stat in team.stats if stat.category == "totalYards"), 0
-                )
-                if team.home_away == "home":
-                    home_team.team = team.team
-                    home_team.total_points = team.points
-                    home_team.team_yards = int(total_yards)
-                elif team.home_away == "away":
-                    away_team.team = team.team
-                    away_team.total_points = team.points
-                    away_team.team_yards = int(total_yards)
-
-            total_yards = home_team.team_yards + away_team.team_yards
-            home_team.total_yards = total_yards
-            away_team.total_yards = total_yards
-
-            if home_team.team_yards > 350 and home_team.team_yards > away_team.team_yards:
-                share_of_yards = home_team.team_yards / total_yards
-                home_team.spinach_yards = share_of_yards / home_team.total_points if home_team.total_points > 0 else share_of_yards
-                spinach_teams.append(home_team)
-            elif away_team.team_yards > 350 and away_team.team_yards > home_team.team_yards:
-                share_of_yards = away_team.team_yards / total_yards
-                away_team.spinach_yards = share_of_yards / away_team.total_points if away_team.total_points > 0 else share_of_yards
-                spinach_teams.append(away_team)
-    except Exception as e:
-        print(f"Exception when calling TeamsApi for Team Stats->get_team_stats: {e}\n")
+                spinach_teams.extend(build_spinach_teams(classified_game_stats))
+            except Exception as e:
+                print(f"Exception when building {classification} spinach teams: {e}\n")
 
 
     print("Working on 17-0 games...")
@@ -883,77 +886,27 @@ write_report(
     ],
 )
 
-write_report(
-    f"highest_scoring_fbs_games_week_{week}.txt",
-    "10 Highest Scoring FBS Games:",
-    [
-        f"{i+1}. {game.home_team} vs {game.away_team}: {game.home_score}-{game.away_score}\n"
-        for i, game in enumerate(sorted(fbs_games, key=lambda x: x.home_score + x.away_score, reverse=True)[:10])
-    ],
-)
-
-write_report(
-    f"lowest_scoring_fbs_games_week_{week}.txt",
-    "10 Lowest Scoring FBS Games:",
-    [
-        f"{i+1}. {game.home_team} vs {game.away_team}: {game.home_score}-{game.away_score}\n"
-        for i, game in enumerate(sorted(fbs_games, key=lambda x: x.home_score + x.away_score)[:10])
-    ],
-)
-
-write_report(
-    f"highest_scoring_fcs_games_week_{week}.txt",
-    "10 Highest Scoring FCS Games:",
-    [
-        f"{i+1}. {game.home_team} vs {game.away_team}: {game.home_score}-{game.away_score}\n"
-        for i, game in enumerate(sorted(fcs_games, key=lambda x: x.home_score + x.away_score, reverse=True)[:10])
-    ],
-)
-
-write_report(
-    f"lowest_scoring_fcs_games_week_{week}.txt",
-    "10 Lowest Scoring FCS Games:",
-    [
-        f"{i+1}. {game.home_team} vs {game.away_team}: {game.home_score}-{game.away_score}\n"
-        for i, game in enumerate(sorted(fcs_games, key=lambda x: x.home_score + x.away_score)[:10])
-    ],
-)
-
-write_report(
-    f"highest_scoring_d2_games_week_{week}.txt",
-    "10 Highest Scoring D2 Games:",
-    [
-        f"{i+1}. {game.home_team} vs {game.away_team}: {game.home_score}-{game.away_score}\n"
-        for i, game in enumerate(sorted(d2_games, key=lambda x: x.home_score + x.away_score, reverse=True)[:10])
-    ],
-)
-
-write_report(
-    f"lowest_scoring_d2_games_week_{week}.txt",
-    "10 Lowest Scoring D2 Games:",
-    [
-        f"{i+1}. {game.home_team} vs {game.away_team}: {game.home_score}-{game.away_score}\n"
-        for i, game in enumerate(sorted(d2_games, key=lambda x: x.home_score + x.away_score)[:10])
-    ],
-)
-
-write_report(
-    f"highest_scoring_d3_games_week_{week}.txt",
-    "10 Highest Scoring D3 Games:",
-    [
-        f"{i+1}. {game.home_team} vs {game.away_team}: {game.home_score}-{game.away_score}\n"
-        for i, game in enumerate(sorted(d3_games, key=lambda x: x.home_score + x.away_score, reverse=True)[:10])
-    ],
-)
-
-write_report(
-    f"lowest_scoring_d3_games_week_{week}.txt",
-    "10 Lowest Scoring D3 Games:",
-    [
-        f"{i+1}. {game.home_team} vs {game.away_team}: {game.home_score}-{game.away_score}\n"
-        for i, game in enumerate(sorted(d3_games, key=lambda x: x.home_score + x.away_score)[:10])
-    ],
-)
+for classification, games in (
+    ("fbs", fbs_games),
+    ("fcs", fcs_games),
+    ("d2", d2_games),
+    ("d3", d3_games),
+):
+    for direction, reverse in (("Highest", True), ("Lowest", False)):
+        ranked_games = sorted(
+            games,
+            key=lambda game: game.home_score + game.away_score,
+            reverse=reverse,
+        )[:10]
+        write_report(
+            f"{direction.lower()}_scoring_{classification}_games_week_{week}.txt",
+            f"10 {direction} Scoring {classification.upper()} Games:",
+            [
+                f"{i + 1}. {game.home_team} vs {game.away_team}: "
+                f"{game.home_score}-{game.away_score}\n"
+                for i, game in enumerate(ranked_games)
+            ],
+        )
 
 report_lines = [
     "*** The Most Dangerous Lead In College Football ***\n",
