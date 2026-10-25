@@ -1,6 +1,5 @@
 import os
 import re
-import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -179,8 +178,6 @@ fbs_games = []
 fcs_games = []
 d2_games = []
 d3_games = []
-
-today = time.strftime("%Y-%m-%d")
 
 year_raw = first_env("YEAR", "year")
 week_raw = first_env("WEEK", "week", "CFBD_WEEK")
@@ -765,11 +762,33 @@ except Exception as e:
 
 
 # Helper for writing repeated report files.
+report_files = []
+
+
 def write_report(path, header, rows):
     with open(path, "w", encoding="utf-8") as handle:
-        handle.write(f"{header}\n")
+        if header:
+            handle.write(f"{header} - Week {week}, {year}\n")
         for row in rows:
             handle.write(row)
+    report_files.append(path)
+
+
+def format_table(headers, rows):
+    rows = [[str(value) for value in row] for row in rows]
+    widths = [
+        max([len(header), *(len(row[index]) for row in rows)])
+        for index, header in enumerate(headers)
+    ]
+    header_line = " | ".join(
+        header.ljust(widths[index]) for index, header in enumerate(headers)
+    )
+    separator = "-+-".join("-" * width for width in widths)
+    data_lines = [
+        " | ".join(value.ljust(widths[index]) for index, value in enumerate(row))
+        for row in rows
+    ]
+    return ["\n", *(f"{line}\n" for line in (header_line, separator, *data_lines))]
 
 
 if top_turnover_games is not None:
@@ -787,7 +806,7 @@ if top_turnover_games is not None:
             if game.total_turnovers == cutoff_turnovers
         )
 
-    turnover_report_lines = []
+    turnover_report_rows = []
     rank = 0
     previous_turnovers = None
     for game in top_turnover_games:
@@ -796,94 +815,135 @@ if top_turnover_games is not None:
             previous_turnovers = game.total_turnovers
         home_score = game.home_score if game.home_score is not None else "N/A"
         away_score = game.away_score if game.away_score is not None else "N/A"
-        turnover_report_lines.extend(
-            [
-                f"{rank}. {game.home_team} vs {game.away_team} | "
-                f"{home_score} - {away_score}\n",
-                f"   Interceptions: {game.interceptions}\n",
-                f"   Fumbles: {game.fumbles}\n",
-                f"   Total turnovers: {game.total_turnovers}\n",
-                "\n",
-            ]
+        turnover_report_rows.append(
+            (
+                rank,
+                f"{game.home_team} vs {game.away_team}",
+                f"{home_score}-{away_score}",
+                game.interceptions,
+                game.fumbles,
+                game.total_turnovers,
+            )
         )
 
     write_report(
         f"top_turnover_games_week_{week}.txt",
-        f"Top turnover games - Week {week}, {year}",
-        turnover_report_lines,
+        "Top Turnover Games",
+        format_table(
+            ["Rank", "Game", "Score", "Interceptions", "Fumbles", "Turnovers"],
+            turnover_report_rows,
+        ),
     )
 
 
 write_report(
     f"scoring_drives_week_{week}.txt",
-    "10 Longest Scoring Drives:",
+    "10 Longest Scoring Drives",
     [
-        f"{i+1}. Offense: {drive.offense_team}, Defense: {drive.defense_team}, Result: {drive.result}, Plays: {drive.plays}, Time: {drive.minutes}:{drive.seconds:02d}, Yards: {drive.yards}, Final Play: {drive.final_play_text}\n"
+        f"{i + 1}. {drive.offense_team} vs {drive.defense_team} | "
+        f"{drive.result} | {drive.plays} plays | "
+        f"{drive.minutes}:{drive.seconds:02d} | {drive.yards} yards | "
+        f"Final play: {drive.final_play_text}\n"
         for i, drive in enumerate(longest_scoring_drives[:10])
     ],
 )
 
 write_report(
     f"non_scoring_drives_week_{week}.txt",
-    "10 Longest Non-Scoring Drives:",
+    "10 Longest Non-Scoring Drives",
     [
-        f"{i+1}. Offense: {drive.offense_team}, Defense: {drive.defense_team}, Result: {drive.result}, Plays: {drive.plays}, Time: {drive.minutes}:{drive.seconds:02d}, Yards: {drive.yards}, Final Play: {drive.final_play_text}\n"
+        f"{i + 1}. {drive.offense_team} vs {drive.defense_team} | "
+        f"{drive.result} | {drive.plays} plays | "
+        f"{drive.minutes}:{drive.seconds:02d} | {drive.yards} yards | "
+        f"Final play: {drive.final_play_text}\n"
         for i, drive in enumerate(longest_non_scoring_drives[:10])
     ],
 )
 
 write_report(
     f"longest_punts_week_{week}.txt",
-    "10 Longest Punts:",
-    [
-        f"{i+1}. Offense: {punt.offense}, Defense: {punt.defense}, Quarter: {punt.quarter}, Time: {punt.time}, Player: #{punt.punter_number} {punt.punter_name}, Punt Distance: {punt.punt_distance} yards\n"
+    "10 Longest Punts",
+    format_table(
+        ["Rank", "Game", "Distance", "Punter", "Quarter", "Time"],
+        [
+            (
+                i + 1,
+                f"{punt.offense} vs {punt.defense}",
+                f"{punt.punt_distance} yd",
+                f"#{punt.punter_number} {punt.punter_name}".strip(),
+                punt.quarter,
+                punt.time,
+            )
         for i, punt in enumerate(sorted(punts, key=lambda x: x.punt_distance, reverse=True)[:10])
-    ],
+        ],
+    ),
 )
 
 write_report(
     f"punts_no_touchbacks_week_{week}.txt",
-    "10 Longest Punts Excluding Touchbacks:",
-    [
-        f"{i+1}. Offense: {punt.offense}, Defense: {punt.defense}, Quarter: {punt.quarter}, Time: {punt.time}, Player: #{punt.punter_number} {punt.punter_name}, Punt Distance: {punt.punt_distance} yards\n"
-        for i, punt in enumerate(sorted((punt for punt in punts if "TOUCHBACK" not in punt.play_text.upper()), key=lambda punt: punt.punt_distance, reverse=True)[:10])
-    ],
+    "10 Longest Punts Excluding Touchbacks",
+    format_table(
+        ["Rank", "Game", "Distance", "Punter", "Quarter", "Time"],
+        [
+            (
+                i + 1,
+                f"{punt.offense} vs {punt.defense}",
+                f"{punt.punt_distance} yd",
+                f"#{punt.punter_number} {punt.punter_name}".strip(),
+                punt.quarter,
+                punt.time,
+            )
+            for i, punt in enumerate(
+                sorted(
+                    (punt for punt in punts if "TOUCHBACK" not in punt.play_text.upper()),
+                    key=lambda punt: punt.punt_distance,
+                    reverse=True,
+                )[:10]
+            )
+        ],
+    ),
 )
-
-#write_report(
-#    f"shortest_punts_{today}.txt",
-#    "10 Shortest Punts:",
-#    [
-#        f"{i+1}. Offense: {punt.offense}, Defense: {punt.defense}, Quarter: {punt.quarter}, Time: {punt.time}, Player: #{punt.punter_number} {punt.punter_name}, Punt Distance: {punt.punt_distance} yards, Play Text: {punt.play_text}\n"
-#        for i, punt in enumerate(sorted(punts, key=lambda x: x.punt_distance)[:10])
-#    ],
-#)
 
 write_report(
     f"safeties_week_{week}.txt",
-    "Safety Alert:",
+    "Safety Alert",
     [
-        f"{i+1}. Offense: {safety.offense}, Defense: {safety.defense}, Quarter: {safety.quarter}, Time: {safety.time}, Play Text: {safety.play_text}\n"
+        f"{i + 1}. {safety.offense} vs {safety.defense} | "
+        f"Q{safety.quarter} {safety.time} | {safety.play_text}\n"
         for i, safety in enumerate(safeties)
     ],
 )
 
 write_report(
     f"field_goals_week_{week}.txt",
-    "10 Longest Field Goals:",
+    "10 Longest Field Goals",
     [
-        f"{i+1}. Offense: {field_goal.offense}, Defense: {field_goal.defense}, Quarter: {field_goal.quarter}, Time: {field_goal.time}, Play Text: {field_goal.play_text}, Yards Gained: {field_goal.yards_gained}\n"
+        f"{i + 1}. {field_goal.offense} vs {field_goal.defense} | "
+        f"{field_goal.yards_gained} yd field goal | "
+        f"Q{field_goal.quarter} {field_goal.time} | {field_goal.play_text}\n"
         for i, field_goal in enumerate(sorted(field_goals, key=lambda x: x.yards_gained, reverse=True)[:10])
     ],
 )
 
 write_report(
     f"spinach_teams_of_the_week_week_{week}.txt",
-    "Spinach Teams of the Week:",
-    [
-        f"{i+1}. Team: {team_stat.team}, Total Points: {team_stat.total_points}, Team Yards: {team_stat.team_yards}, Total Game Yards: {team_stat.total_yards}, Spinach Yards per Point: {team_stat.spinach_yards:.2f}\n"
-        for i, team_stat in enumerate(sorted(spinach_teams, key=lambda x: x.spinach_yards, reverse=True)[:10])
-    ],
+    "Spinach Teams of the Week",
+    format_table(
+        ["Rank", "Team", "Points", "Team Yards", "Game Yards", "Yards per Point"],
+        [
+            (
+                i + 1,
+                team_stat.team,
+                team_stat.total_points,
+                team_stat.team_yards,
+                team_stat.total_yards,
+                f"{team_stat.spinach_yards:.2f}",
+            )
+            for i, team_stat in enumerate(
+                sorted(spinach_teams, key=lambda x: x.spinach_yards, reverse=True)[:10]
+            )
+        ],
+    ),
 )
 
 for classification, games in (
@@ -900,129 +960,176 @@ for classification, games in (
         )[:10]
         write_report(
             f"{direction.lower()}_scoring_{classification}_games_week_{week}.txt",
-            f"10 {direction} Scoring {classification.upper()} Games:",
-            [
-                f"{i + 1}. {game.home_team} vs {game.away_team}: "
-                f"{game.home_score}-{game.away_score}\n"
-                for i, game in enumerate(ranked_games)
-            ],
+            f"10 {direction} Scoring {classification.upper()} Games",
+            format_table(
+                ["Rank", "Game", "Score", "Total Points"],
+                [
+                    (
+                        i + 1,
+                        f"{game.home_team} vs {game.away_team}",
+                        f"{game.home_score}-{game.away_score}",
+                        game.home_score + game.away_score,
+                    )
+                    for i, game in enumerate(ranked_games)
+                ],
+            ),
         )
 
-report_lines = [
-    "*** The Most Dangerous Lead In College Football ***\n",
-    f"Week {week} of {year} Season\n",
-    "Teams that were 17-0 and lost:\n",
+lost_17_to_0_games = [
+    game for game in games_that_were_17_to_0 if game.seventeen_zero_team_lost
 ]
-j = 0
-for game in games_that_were_17_to_0:
-    if game.seventeen_zero_team_lost:
-        j += 1
-        if game.home_score > game.away_score:
-            report_lines.append(
-                f"{j}. {game.home_team} vs {game.away_team}: {game.home_score}-{game.away_score}, {game.home_team} lost {game.away_final_score} - {game.home_final_score}\n"
-            )
-        else:
-            report_lines.append(
-                f"{j}. {game.home_team} vs {game.away_team}: {game.home_score}-{game.away_score}, {game.away_team} lost {game.home_final_score} - {game.away_final_score}\n"
-            )
+survived_17_to_0_games = [
+    game for game in games_that_were_17_to_0 if not game.seventeen_zero_team_lost
+]
 
-report_lines.append("\n =================================================== \n\n")
-report_lines.append("Teams that survived:\n")
-j = 0
-for game in games_that_were_17_to_0:
-    if not game.seventeen_zero_team_lost:
-        j += 1
-        if game.home_score > game.away_score:
-            report_lines.append(
-                f"{j}. {game.home_team} vs {game.away_team}: {game.home_score}-{game.away_score}, {game.home_team} survived with a win of {game.home_final_score} - {game.away_final_score}\n"
-            )
-        else:
-            report_lines.append(
-                f"{j}. {game.home_team} vs {game.away_team}: {game.home_score}-{game.away_score}, {game.away_team} survived with a win of {game.away_final_score} - {game.home_final_score}\n"
-            )
 
-write_report(f"games_that_were_17_to_0_week_{week}.txt", "", report_lines)
+def build_17_to_0_rows(games):
+    rows = []
+    for rank, game in enumerate(games, start=1):
+        leading_team = game.home_team if game.home_score == 17 else game.away_team
+        opponent = game.away_team if game.home_score == 17 else game.home_team
+        rows.append(
+            (
+                rank,
+                leading_team,
+                opponent,
+                f"{game.home_final_score}-{game.away_final_score}",
+                "Lost" if game.seventeen_zero_team_lost else "Won",
+            )
+        )
+    return rows
+
+
+write_report(
+    f"games_that_were_17_to_0_week_{week}.txt",
+    "The Most Dangerous Lead In College Football",
+    [
+        "Teams that lost:\n",
+        *format_table(
+            ["Rank", "Team With 17-0 Lead", "Opponent", "Final Score", "Outcome"],
+            build_17_to_0_rows(lost_17_to_0_games),
+        ),
+        "\nTeams that survived:\n",
+        *format_table(
+            ["Rank", "Team With 17-0 Lead", "Opponent", "Final Score", "Outcome"],
+            build_17_to_0_rows(survived_17_to_0_games),
+        ),
+    ],
+)
 
 write_report(
     f"scoops_and_scores_week_{week}.txt",
-    "Scoop and Score Plays:",
+    "Scoop and Score Plays",
     [
-        f"{i+1}. Offense: {drive.offense_team}, Defense: {drive.defense_team}, Quarter: {drive.quarter}, Clock: {drive.clock_time}, Final Play: {drive.final_play_text}\n"
+        f"{i + 1}. {drive.offense_team} vs {drive.defense_team} | "
+        f"Q{drive.quarter} {drive.clock_time} | {drive.final_play_text}\n"
         for i, drive in enumerate(scoops_and_scores)
     ],
 )
 
 write_report(
     f"pick_sixes_week_{week}.txt",
-    "Pick Six Plays:",
+    "Pick Six Plays",
     [
-        f"{i+1}. Offense: {drive.offense_team}, Defense: {drive.defense_team}, Quarter: {drive.quarter}, Clock: {drive.clock_time}, Final Play: {drive.final_play_text}\n"
+        f"{i + 1}. {drive.offense_team} vs {drive.defense_team} | "
+        f"Q{drive.quarter} {drive.clock_time} | {drive.final_play_text}\n"
         for i, drive in enumerate(pick_sixes)
     ],
 )
 
 write_report(
     f"qb_punts_week_{week}.txt",
-    "Quarterback Punting Stats:",
-    [
-        f"{i+1}. Team: {punt.team}, Conference: {punt.conference}, Player: {punt.player_name}, Position: {punt.position}, Punts: {punt.number_of_punts}, Total Yards: {punt.total_punt_yards}, Yards per Punt: {punt.yards_per_punt:.2f}, Longest Punt: {punt.longest_punt}, Punts Inside 20: {punt.punts_inside_20}, Touchbacks: {punt.touchbacks}\n"
-        for i, punt in enumerate(most_qb_punts)
-    ],
+    "Quarterback Punting Stats",
+    format_table(
+        ["Rank", "Player", "Team", "Conference", "Punts", "Yards", "Avg", "Long", "Inside 20", "Touchbacks"],
+        [
+            (
+                i + 1,
+                f"{punt.player_name} ({punt.position})",
+                punt.team,
+                punt.conference,
+                punt.number_of_punts,
+                punt.total_punt_yards,
+                f"{punt.yards_per_punt:.2f}",
+                punt.longest_punt,
+                punt.punts_inside_20,
+                punt.touchbacks,
+            )
+            for i, punt in enumerate(most_qb_punts)
+        ],
+    ),
 )
 
 if len(most_other_punts) > 0:
     write_report(
         f"other_punts_week_{week}.txt",
-        "Other Punting Stats:",
-        [
-            f"{i+1}. Team: {punt.team}, Conference: {punt.conference}, Player: {punt.player_name}, Position: {punt.position}, Punts: {punt.number_of_punts}, Total Yards: {punt.total_punt_yards}, Yards per Punt: {punt.yards_per_punt:.2f}, Longest Punt: {punt.longest_punt}, Punts Inside 20: {punt.punts_inside_20}, Touchbacks: {punt.touchbacks}\n"
-            for i, punt in enumerate(most_other_punts)
-        ],
+        "Other Punting Stats",
+        format_table(
+            ["Rank", "Player", "Team", "Conference", "Punts", "Yards", "Avg", "Long", "Inside 20", "Touchbacks"],
+            [
+                (
+                    i + 1,
+                    f"{punt.player_name} ({punt.position})",
+                    punt.team,
+                    punt.conference,
+                    punt.number_of_punts,
+                    punt.total_punt_yards,
+                    f"{punt.yards_per_punt:.2f}",
+                    punt.longest_punt,
+                    punt.punts_inside_20,
+                    punt.touchbacks,
+                )
+                for i, punt in enumerate(most_other_punts)
+            ],
+        ),
     )
 
 write_report(
     f"non_qb_passes_week_{week}.txt",
-    "Non-QB Passing Stats:",
-    [
-        f"{i+1}. Team: {passer.team}, Conference: {passer.conference}, Player: {passer.player_name}, Position: {passer.position}, Attempts: {passer.passing_attempts}, Completions: {passer.passing_completions}, Yards: {passer.passing_yards}, Touchdowns: {passer.passing_touchdowns}, Interceptions: {passer.passing_interceptions}, Completion %: {passer.passing_percentage:.2f}, Yards per Attempt: {passer.passing_yards_per_attempt:.2f}\n"
-        for i, passer in enumerate(most_non_qb_passes)
-    ],
+    "Non-QB Passing Stats",
+    format_table(
+        ["Rank", "Player", "Team", "Conference", "Comp/Att", "Yards", "TD", "INT", "Comp %", "YPA"],
+        [
+            (
+                i + 1,
+                f"{passer.player_name} ({passer.position})",
+                passer.team,
+                passer.conference,
+                f"{passer.passing_completions}/{passer.passing_attempts}",
+                passer.passing_yards,
+                passer.passing_touchdowns,
+                passer.passing_interceptions,
+                f"{passer.passing_percentage:.2f}",
+                f"{passer.passing_yards_per_attempt:.2f}",
+            )
+            for i, passer in enumerate(most_non_qb_passes)
+        ],
+    ),
 )
 
 write_report(
     f"non_rusher_rushes_week_{week}.txt",
-    "Non-Rusher Rushing Stats:",
-    [
-        f"{i+1}. Team: {rusher.team}, Conference: {rusher.conference}, Player: {rusher.player_name}, Position: {rusher.position}, Carries: {rusher.rushing_carries}, Yards: {rusher.rushing_yards}, Touchdowns: {rusher.rushing_touchdowns}, Longest Rush: {rusher.rushing_long}, Yards per Carry: {rusher.rushing_yards_per_carry:.2f}\n"
-        for i, rusher in enumerate(most_non_rusher_rushes)
-    ],
+    "Non-Rusher Rushing Stats",
+    format_table(
+        ["Rank", "Player", "Team", "Conference", "Carries", "Yards", "TD", "Long", "YPC"],
+        [
+            (
+                i + 1,
+                f"{rusher.player_name} ({rusher.position})",
+                rusher.team,
+                rusher.conference,
+                rusher.rushing_carries,
+                rusher.rushing_yards,
+                rusher.rushing_touchdowns,
+                rusher.rushing_long,
+                f"{rusher.rushing_yards_per_carry:.2f}",
+            )
+            for i, rusher in enumerate(most_non_rusher_rushes)
+        ],
+    ),
 )
 
-for filename in [
-    f"scoring_drives_{today}.txt",
-    f"non_scoring_drives_{today}.txt",
-    f"longest_punts_{today}.txt",
-    f"punts_no_touchbacks_{today}.txt",
-    f"safeties_{today}.txt",
-    f"field_goals_{today}.txt",
-    f"spinach_teams_of_the_week_{today}.txt",
-    f"highest_scoring_fbs_games_{today}.txt",
-    f"lowest_scoring_fbs_games_{today}.txt",
-    f"highest_scoring_fcs_games_{today}.txt",
-    f"lowest_scoring_fcs_games_{today}.txt",
-    f"highest_scoring_d2_games_{today}.txt",
-    f"lowest_scoring_d2_games_{today}.txt",
-    f"highest_scoring_d3_games_{today}.txt",
-    f"lowest_scoring_d3_games_{today}.txt",
-    f"games_that_were_17_to_0_{today}.txt",
-    f"scoops_and_scores_{today}.txt",
-    f"pick_sixes_{today}.txt"
-    f"qb_punts_{today}.txt"
-    f"other_punts_{today}.txt"
-    f"non_qb_passes_{today}.txt"
-    f"non_rusher_rushes_{today}.txt"
-    f"top_turnover_games_week_{week}.txt"
-]:
+for filename in report_files:
     with open(filename, "rb") as file_handle:
         file_data = file_handle.read()
         response = requests.post(
