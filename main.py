@@ -986,14 +986,20 @@ survived_17_to_0_games = [
 def build_17_to_0_rows(games):
     rows = []
     for rank, game in enumerate(games, start=1):
-        leading_team = game.home_team if game.home_score == 17 else game.away_team
-        opponent = game.away_team if game.home_score == 17 else game.home_team
+        if game.home_score == 17:
+            leading_team, opponent = game.home_team, game.away_team
+            leading_team_final_score = game.home_final_score
+            opponent_final_score = game.away_final_score
+        else:
+            leading_team, opponent = game.away_team, game.home_team
+            leading_team_final_score = game.away_final_score
+            opponent_final_score = game.home_final_score
         rows.append(
             (
                 rank,
                 leading_team,
                 opponent,
-                f"{game.home_final_score}-{game.away_final_score}",
+                f"{leading_team_final_score}-{opponent_final_score}",
                 "Lost" if game.seventeen_zero_team_lost else "Won",
             )
         )
