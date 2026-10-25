@@ -29,7 +29,7 @@ def main() -> None:
     webhook_url = discord_webhook
     user = discord_user
     data = {
-        "content": f"Hey <@{discord_user}> this is a test error message!"
+        "content": f"Hey <@{discord_user}> this is a test error message!\n\nThe error message could look like this ```blah blah blah```"
     }
 
     response = requests.post(

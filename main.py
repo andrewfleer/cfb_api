@@ -1,5 +1,6 @@
 import os
 import re
+import sys
 import textwrap
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,6 +31,7 @@ def first_env(*names):
 secret_host = first_env("host", "HOST", "CFBD_HOST") or "https://api.collegefootballdata.com"
 secret_access_token = first_env("access_token", "ACCESS_TOKEN")
 secret_discord_webhook = first_env("discord_webhook", "DISCORD_WEBHOOK")
+secret_discord_user = first_env("discord_user", "DISCORD_USER")
 
 if not secret_access_token:
     raise RuntimeError("Missing access token. Set ACCESS_TOKEN (or access_token) as a GitHub Actions secret.")
@@ -37,11 +39,15 @@ if not secret_access_token:
 if not secret_discord_webhook:
     raise RuntimeError("Missing Discord webhook. Set DISCORD_WEBHOOK (or discord_webhook) as a GitHub Actions secret.")
 
+if not secret_discord_user:
+    raise RuntimeError("Missing Discord user. Set DISCORD_USER (or discord_user) as a Github Actions secret.")
+
 configuration = Configuration(
     host=secret_host,
     access_token=secret_access_token,
 )
 webhook_url = secret_discord_webhook
+discord_user = secret_discord_user
 
 
 @dataclass
@@ -189,6 +195,27 @@ if year_raw is None or week_raw is None:
 year = int(year_raw)
 week = int(week_raw)
 
+def discord_webhook_error_alert(error_message):
+    print(error_message)
+    data = {
+        "content": f"""Hey <@{discord_user}>: **Tummy Hort**
+        
+        Error message:
+        ```
+        {error_message}
+        ```
+        """
+    }
+
+    response = requests.post(
+        webhook_url,
+        json=data
+    )
+    if response.status_code in (200, 204):
+        print("Successfully sent error message in discord")
+    else:
+        print(f"Failed to send error message via webhook. Status code: {response.status_code}")
+
 
 def parse_punt_text(play_text):
     pattern = r"^\s*(?:\([^)]+\)\s*)?(?:#?(\d+)\s+(.+?)\s+)?punt\s+(\d+)\s+yards?\b"
@@ -328,35 +355,42 @@ with ApiClient(configuration) as api_client:
     try:
         week_games = games_api.get_games(year, week=week)
     except Exception as e:
-        print(f"Exception when calling GamesApi->get_games: {e}\n")
-        week_games = []
+        error_message = f"Exception when calling GamesApi->get_games: {e}\n"
+        discord_webhook_error_alert(error_message=error_message)
+        sys.exit()
 
     print(f"Getting drive data for year {year} - week {week}...")
     try:
         week_drives = drives_api.get_drives(year, week=week)
     except Exception as e:
-        print(f"Exception when calling DrivesApi->get_drives: {e}\n")
-        week_drives = []
+        error_message = f"Exception when calling DrivesApi->get_drives: {e}\n"
+        discord_webhook_error_alert(error_message=error_message)
+        sys.exit()
 
     print(f"Getting play data for year {year} - week {week}...")
     try:
         week_plays = plays_api.get_plays(year, week=week)
     except Exception as e:
-        print(f"Exception when calling PlaysApi->get_plays: {e}\n")
-        week_plays = []
+        error_message=f"Exception when calling PlaysApi->get_plays: {e}\n"
+        discord_webhook_error_alert(error_message=error_message)
+        sys.exit()
 
     print(f"Getting game stats data for year {year} - week {week}...")
     try:
         weekly_game_team_stats = games_api.get_game_team_stats(year, week=week)
     except Exception as e:
-        print(f"Exception when calling GamesApi->get_game_team_stats: {e}\n")
+        error_message=f"Exception when calling GamesApi->get_game_team_stats: {e}\n"
+        discord_webhook_error_alert(error_message=error_message)
+        sys.exit()
 
     games_by_id = {game.id: game for game in week_games}
     if weekly_game_team_stats is not None:
         try:
             top_turnover_games = build_turnover_games(weekly_game_team_stats)
         except Exception as e:
-            print(f"Exception when building Top Turnover Games report: {e}\n")
+            error_message=f"Exception when building Top Turnover Games report: {e}\n"
+            discord_webhook_error_alert(error_message=error_message)
+            sys.exit()
 
     plays_by_drive = {}
     for play in week_plays:
@@ -395,7 +429,9 @@ with ApiClient(configuration) as api_client:
 
             add_17_to_0_game(drive)
     except Exception as e:
-        print(f"Exception when calling DrivesApi->get_drives: {e}\n")
+        error_message=f"Exception when processing drive data: {e}\n"
+        discord_webhook_error_alert(error_message=error_message)
+        sys.exit()
 
     print("processing punts...")
     try:
@@ -414,7 +450,9 @@ with ApiClient(configuration) as api_client:
                 )
             )
     except Exception as e:
-        print(f"Exception when calling PlaysApi->get_plays: {e}\n")
+        error_message=f"Exception when calling processing punts: {e}\n"
+        discord_webhook_error_alert(error_message)
+        sys.exit()
 
     print("processing safeties...")
     try:
@@ -429,7 +467,9 @@ with ApiClient(configuration) as api_client:
                 )
             )
     except Exception as e:
-        print(f"Exception when calling PlaysApi for Safeties->get_plays: {e}\n")
+        error_message=f"Exception when calling processing safeties: {e}\n"
+        discord_webhook_error_alert(error_message)
+        sys.exit()
 
     print("processing field goals...")
     try:
@@ -449,7 +489,10 @@ with ApiClient(configuration) as api_client:
             play.yards_gained = field_goal.yards_gained
             field_goals.append(play)
     except Exception as e:
-        print(f"Exception when calling PlaysApi for Field Goals->get_plays: {e}\n")
+        error_message=f"Exception when calling processing field goals: {e}\n"
+        discord_webhook_error_alert(error_message)
+        sys.exit()
+
 
     for drive in scoops_and_scores + pick_sixes:
         try:
@@ -460,7 +503,9 @@ with ApiClient(configuration) as api_client:
                     drive.clock_time = f"{play.clock.minutes}:{str(play.clock.seconds).zfill(2)}"
         except Exception as e:
             label = "Scoop and Score" if drive in scoops_and_scores else "Pick Six"
-            print(f"Exception when calling PlaysApi for {label} final play text->get_plays: {e}\n")
+            error_message=f"Exception when turnover TDs for {label} final play text->get_plays: {e}\n"
+            discord_webhook_error_alert(error_message)
+            sys.exit()
 
     if weekly_game_team_stats is not None:
         for classification in (
@@ -476,10 +521,12 @@ with ApiClient(configuration) as api_client:
                 )
                 spinach_teams.extend(build_spinach_teams(classified_game_stats))
             except Exception as e:
-                print(f"Exception when building {classification} spinach teams: {e}\n")
+                error_message=f"Exception when building {classification} spinach teams: {e}\n"
+                discord_webhook_error_alert(error_message)
+                sys.exit()
 
 
-    print("Working on 17-0 games...")
+    print("Working on high and low scoring games...")
     for classification, result_list in (
         (DivisionClassification("fbs"), fbs_games),
         (DivisionClassification("fcs"), fcs_games),
@@ -505,8 +552,11 @@ with ApiClient(configuration) as api_client:
                 )
                 result_list.append(game_record)
         except Exception as e:
-            print(f"Exception when calling GamesApi for {classification} Games->get_games: {e}\n")
+            error_message="Exception when processing high and low scoring games for {classification} Games: {e}\n"
+            discord_webhook_error_alert(error_message)
+            sys.exit() 
 
+    print("Processing 17-0 games")
     for game in games_that_were_17_to_0:
         try:
             result = games_by_id.get(game.game_id)
@@ -522,7 +572,10 @@ with ApiClient(configuration) as api_client:
             elif game.away_score > game.home_score:
                 game.seventeen_zero_team_lost = result.away_points < result.home_points
         except Exception as e:
-            print(f"Exception when calling GamesApi for 17-0 Games->get_games: {e}\n")
+            error_message=f"Exception when processing for 17-0 Games: {e}\n"
+            discord_webhook_error_alert(error_message)
+            sys.exit()
+
 
     print("getting non-punter punt stats")
     try:
@@ -615,7 +668,9 @@ with ApiClient(configuration) as api_client:
                     )
 
     except Exception as e:
-         print(f"Exception when calling StatsApi for Punting Stats->get_player_season_stats: {e}\n")
+        error_message=f"Exception when calling StatsApi for Punting Stats->get_player_season_stats: {e}\n"
+        discord_webhook_error_alert(error_message)
+        sys.exit()
 
     print("getting non-QB passing stats")
     try:
@@ -666,7 +721,9 @@ with ApiClient(configuration) as api_client:
                         )
                     )
     except Exception as e:
-        print(f"Exception when calling StatsApi for Passing Stats->get_player_season_stats: {e}\n")
+        error_message=f"Exception when calling StatsApi for Passing Stats->get_player_season_stats: {e}\n"
+        discord_webhook_error_alert(error_message)
+        sys.exit()
 
     print("getting non-rusher rushing stats")
     try:
@@ -711,7 +768,9 @@ with ApiClient(configuration) as api_client:
                         )
                     )
     except Exception as e:
-        print(f"Exception when calling StatsApi for Rushing Stats->get_player_season_stats: {e}\n")
+        error_message=f"Exception when calling StatsApi for Rushing Stats->get_player_season_stats: {e}\n"
+        discord_webhook_error_alert(error_message)
+        sys.exit()
 
                 
 
@@ -759,7 +818,9 @@ try:
                 max_play_number = play.play_number
                 drive.final_play_text = play.play_text
 except Exception as e:
-    print(f"Exception when calling PlaysApi for final play text->get_plays: {e}\n")
+    error_message=f"Exception when processing longest drives: {e}\n"
+    discord_webhook_error_alert(error_message)
+    sys.exit()
 
 
 # Helper for writing repeated report files.
