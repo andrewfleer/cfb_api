@@ -1,3 +1,4 @@
 cfbd
 python-dotenv
 requests
+pandas
