@@ -46,6 +46,7 @@ webhook_url = secret_discord_webhook
 
 @dataclass
 class Drive:
+    game_id: int
     drive_id: str
     quarter: int
     clock_time: str
@@ -93,10 +94,17 @@ class TeamStats:
 
 @dataclass
 class Game:
+    game_id: int
     home_team: str
     away_team: str
-    home_score: int
-    away_score: int
+    home_score: int | None
+    away_score: int | None
+    interceptions: int = 0
+    fumbles: int = 0
+
+    @property
+    def total_turnovers(self) -> int:
+        return self.interceptions + self.fumbles
 
 
 @dataclass
@@ -185,11 +193,46 @@ week = int(week_raw)
 
 
 def parse_punt_text(play_text):
-    pattern = r"^(?:\([^)]+\)\s*)?#?(\d+)\s+(.+?)\s+punt\s+(\d+)\s+yards\b"
+    pattern = r"^\s*(?:\([^)]+\)\s*)?(?:#?(\d+)\s+(.+?)\s+)?punt\s+(\d+)\s+yards?\b"
     match = re.search(pattern, play_text)
     if match:
-        return int(match.group(1)), match.group(2), int(match.group(3))
+        return int(match.group(1) or 0), match.group(2) or "", int(match.group(3))
     return 0, "", 0
+
+
+def build_turnover_games(game_team_stats):
+    games = []
+    for game_stats in game_team_stats:
+        teams_by_location = {team.home_away: team for team in game_stats.teams}
+        if len(game_stats.teams) != 2 or set(teams_by_location) != {"home", "away"}:
+            raise ValueError(
+                f"Expected one home and one away team for game {game_stats.id}"
+            )
+
+        home_team = teams_by_location["home"]
+        away_team = teams_by_location["away"]
+        game = Game(
+            game_id=game_stats.id,
+            home_team=home_team.team,
+            away_team=away_team.team,
+            home_score=home_team.points,
+            away_score=away_team.points,
+        )
+        for team in game_stats.teams:
+            team_stats = {stat.category: stat.stat for stat in team.stats}
+            required_categories = {"interceptions", "fumblesLost"}
+            missing_categories = required_categories - team_stats.keys()
+            if missing_categories:
+                raise ValueError(
+                    f"Missing turnover stats for {team.team} in game "
+                    f"{game.game_id}: {', '.join(sorted(missing_categories))}"
+                )
+            game.interceptions += int(team_stats["interceptions"])
+            game.fumbles += int(team_stats["fumblesLost"])
+
+        games.append(game)
+
+    return games
 
 
 def add_17_to_0_game(drive):
@@ -226,13 +269,49 @@ with ApiClient(configuration) as api_client:
     plays_api = PlaysApi(api_client)
     games_api = GamesApi(api_client)
     stats_api = StatsApi(api_client)
+    top_turnover_games = None
 
+    print(f"Getting game data for year {year} - week {week}...")
     try:
-        api_response = drives_api.get_drives(year, week=week)
-        for drive in api_response:
+        week_games = games_api.get_games(year, week=week)
+    except Exception as e:
+        print(f"Exception when calling GamesApi->get_games: {e}\n")
+        week_games = []
+
+    print(f"Getting drive data for year {year} - week {week}...")
+    try:
+        week_drives = drives_api.get_drives(year, week=week)
+    except Exception as e:
+        print(f"Exception when calling DrivesApi->get_drives: {e}\n")
+        week_drives = []
+
+    print(f"Getting play data for year {year} - week {week}...")
+    try:
+        week_plays = plays_api.get_plays(year, week=week)
+    except Exception as e:
+        print(f"Exception when calling PlaysApi->get_plays: {e}\n")
+        week_plays = []
+
+    print(f"Getting game stats data for year {year} - week {week}...")
+    try:
+        turnover_game_stats = games_api.get_game_team_stats(year, week=week)
+        top_turnover_games = build_turnover_games(turnover_game_stats)
+    except Exception as e:
+        print(f"Exception when building Top Turnover Games report: {e}\n")
+
+    games_by_id = {game.id: game for game in week_games}
+    plays_by_drive = {}
+    for play in week_plays:
+        drive_key = (play.game_id, play.drive_id)
+        plays_by_drive.setdefault(drive_key, []).append(play)
+
+    print("processing drive data...")
+    try:
+        for drive in week_drives:
             result = drive.drive_result
             scoring = result in ["TD", "FG"]
             drive_result = Drive(
+                game_id=drive.game_id,
                 drive_id=drive.id,
                 offense_team=drive.offense,
                 defense_team=drive.defense,
@@ -260,8 +339,9 @@ with ApiClient(configuration) as api_client:
     except Exception as e:
         print(f"Exception when calling DrivesApi->get_drives: {e}\n")
 
+    print("processing punts...")
     try:
-        for punt in plays_api.get_plays(year, week=week, play_type="PUNT"):
+        for punt in (play for play in week_plays if play.play_type == "Punt"):
             punter_number, punter_name, punt_distance = parse_punt_text(punt.play_text)
             punts.append(
                 Punt(
@@ -278,8 +358,9 @@ with ApiClient(configuration) as api_client:
     except Exception as e:
         print(f"Exception when calling PlaysApi->get_plays: {e}\n")
 
+    print("processing safeties...")
     try:
-        for safety in plays_api.get_plays(year, week=week, play_type="SF"):
+        for safety in (play for play in week_plays if play.play_type == "Safety"):
             safeties.append(
                 Play(
                     offense=safety.offense,
@@ -292,8 +373,14 @@ with ApiClient(configuration) as api_client:
     except Exception as e:
         print(f"Exception when calling PlaysApi for Safeties->get_plays: {e}\n")
 
+    print("processing field goals...")
     try:
-        for field_goal in plays_api.get_plays(year, week=week, play_type="FG"):
+        field_goal_types = {
+            "Field Goal Good",
+        }
+        for field_goal in (
+            play for play in week_plays if play.play_type in field_goal_types
+        ):
             play = Play(
                 offense=field_goal.offense,
                 defense=field_goal.defense,
@@ -308,16 +395,16 @@ with ApiClient(configuration) as api_client:
 
     for drive in scoops_and_scores + pick_sixes:
         try:
-            plays_response = plays_api.get_plays(year, week=week, defense=drive.defense_team)
-            for play in plays_response:
-                if play.drive_id == drive.drive_id and play.scoring:
+            for play in plays_by_drive.get((drive.game_id, drive.drive_id), []):
+                if play.scoring:
                     drive.final_play_text = play.play_text
-                    drive.quarter=play.period,
-                    drive.clock_time=f"{play.clock.minutes}:{str(play.clock.seconds).zfill(2)}",
+                    drive.quarter = play.period
+                    drive.clock_time = f"{play.clock.minutes}:{str(play.clock.seconds).zfill(2)}"
         except Exception as e:
             label = "Scoop and Score" if drive in scoops_and_scores else "Pick Six"
             print(f"Exception when calling PlaysApi for {label} final play text->get_plays: {e}\n")
 
+    print("getting FBS spinach teams...")
     try:
         for team_stat in games_api.get_game_team_stats(
             year, week=week, classification=DivisionClassification("fbs")
@@ -354,6 +441,7 @@ with ApiClient(configuration) as api_client:
     except Exception as e:
         print(f"Exception when calling TeamsApi for Team Stats->get_team_stats: {e}\n")
 
+    print("Getting FCS spinach teams...")
     try:
         for team_stat in games_api.get_game_team_stats(
             year, week=week, classification=DivisionClassification("fcs")
@@ -389,6 +477,8 @@ with ApiClient(configuration) as api_client:
     except Exception as e:
         print(f"Exception when calling TeamsApi for Team Stats->get_team_stats: {e}\n")
 
+
+    print("Working on 17-0 games...")
     for classification, result_list in (
         (DivisionClassification("fbs"), fbs_games),
         (DivisionClassification("fcs"), fcs_games),
@@ -396,11 +486,17 @@ with ApiClient(configuration) as api_client:
         (DivisionClassification("iii"), d3_games),
     ):
         try:
-            for game in games_api.get_games(year, week=week, classification=classification):
+            for game in week_games:
+                if classification not in (
+                    game.home_classification,
+                    game.away_classification,
+                ):
+                    continue
                 if game.home_points is None or game.away_points is None:
                     continue
 
                 game_record = Game(
+                    game_id=game.id,
                     home_team=game.home_team,
                     away_team=game.away_team,
                     home_score=game.home_points,
@@ -412,20 +508,22 @@ with ApiClient(configuration) as api_client:
 
     for game in games_that_were_17_to_0:
         try:
-            game_data = games_api.get_games(year, week=week, id=game.game_id)
-            for result in game_data:
-                if result.home_points is None or result.away_points is None:
-                    continue
+            result = games_by_id.get(game.game_id)
+            if result is None:
+                continue
+            if result.home_points is None or result.away_points is None:
+                continue
 
-                game.home_final_score = result.home_points
-                game.away_final_score = result.away_points
-                if game.home_score > game.away_score:
-                    game.seventeen_zero_team_lost = result.home_points < result.away_points
-                elif game.away_score > game.home_score:
-                    game.seventeen_zero_team_lost = result.away_points < result.home_points
+            game.home_final_score = result.home_points
+            game.away_final_score = result.away_points
+            if game.home_score > game.away_score:
+                game.seventeen_zero_team_lost = result.home_points < result.away_points
+            elif game.away_score > game.home_score:
+                game.seventeen_zero_team_lost = result.away_points < result.home_points
         except Exception as e:
             print(f"Exception when calling GamesApi for 17-0 Games->get_games: {e}\n")
 
+    print("getting non-punter punt stats")
     try:
         for punt_stat in stats_api.get_player_season_stats(year, category="punting"):
             if punt_stat.position in ["P", "PK"]:
@@ -518,6 +616,7 @@ with ApiClient(configuration) as api_client:
     except Exception as e:
          print(f"Exception when calling StatsApi for Punting Stats->get_player_season_stats: {e}\n")
 
+    print("getting non-QB passing stats")
     try:
         for pass_stat in stats_api.get_player_season_stats(year, category="passing"):
             if pass_stat.position != "QB":
@@ -568,6 +667,7 @@ with ApiClient(configuration) as api_client:
     except Exception as e:
         print(f"Exception when calling StatsApi for Passing Stats->get_player_season_stats: {e}\n")
 
+    print("getting non-rusher rushing stats")
     try:
         for rush_stat in stats_api.get_player_season_stats(year, category="rushing"):
             if rush_stat.position not in ["RB", "QB"]:
@@ -642,25 +742,21 @@ most_non_rusher_rushes = sorted(
 try:
     for drive in longest_scoring_drives[:10]:
         max_play_number = 0
-        plays_response = plays_api.get_plays(year, week=week, offense=drive.offense_team)
-        for play in plays_response:
-            if play.drive_id == drive.drive_id:
-                if play.play_type == "Timeout":
-                    continue
-                if play.play_number is not None and play.play_number > max_play_number:
-                    max_play_number = play.play_number
-                    drive.final_play_text = play.play_text
+        for play in plays_by_drive.get((drive.game_id, drive.drive_id), []):
+            if play.play_type == "Timeout":
+                continue
+            if play.play_number is not None and play.play_number > max_play_number:
+                max_play_number = play.play_number
+                drive.final_play_text = play.play_text
 
     for drive in longest_non_scoring_drives[:10]:
         max_play_number = 0
-        plays_response = plays_api.get_plays(year, week=week, offense=drive.offense_team)
-        for play in plays_response:
-            if play.drive_id == drive.drive_id:
-                if play.play_type == "Timeout":
-                    continue
-                if play.play_number is not None and play.play_number > max_play_number:
-                    max_play_number = play.play_number
-                    drive.final_play_text = play.play_text
+        for play in plays_by_drive.get((drive.game_id, drive.drive_id), []):
+            if play.play_type == "Timeout":
+                continue
+            if play.play_number is not None and play.play_number > max_play_number:
+                max_play_number = play.play_number
+                drive.final_play_text = play.play_text
 except Exception as e:
     print(f"Exception when calling PlaysApi for final play text->get_plays: {e}\n")
 
@@ -673,8 +769,50 @@ def write_report(path, header, rows):
             handle.write(row)
 
 
+if top_turnover_games is not None:
+    ranked_turnover_games = sorted(
+        top_turnover_games,
+        key=lambda game: game.total_turnovers,
+        reverse=True,
+    )
+    top_turnover_games = ranked_turnover_games[:10]
+    if len(ranked_turnover_games) > 10 and top_turnover_games:
+        cutoff_turnovers = top_turnover_games[-1].total_turnovers
+        top_turnover_games.extend(
+            game
+            for game in ranked_turnover_games[10:]
+            if game.total_turnovers == cutoff_turnovers
+        )
+
+    turnover_report_lines = []
+    rank = 0
+    previous_turnovers = None
+    for game in top_turnover_games:
+        if game.total_turnovers != previous_turnovers:
+            rank += 1
+            previous_turnovers = game.total_turnovers
+        home_score = game.home_score if game.home_score is not None else "N/A"
+        away_score = game.away_score if game.away_score is not None else "N/A"
+        turnover_report_lines.extend(
+            [
+                f"{rank}. {game.home_team} vs {game.away_team} | "
+                f"{home_score} - {away_score}\n",
+                f"   Interceptions: {game.interceptions}\n",
+                f"   Fumbles: {game.fumbles}\n",
+                f"   Total turnovers: {game.total_turnovers}\n",
+                "\n",
+            ]
+        )
+
+    write_report(
+        f"top_turnover_games_week_{week}.txt",
+        f"Top turnover games - Week {week}, {year}",
+        turnover_report_lines,
+    )
+
+
 write_report(
-    f"scoring_drives_{today}.txt",
+    f"scoring_drives_week_{week}.txt",
     "10 Longest Scoring Drives:",
     [
         f"{i+1}. Offense: {drive.offense_team}, Defense: {drive.defense_team}, Result: {drive.result}, Plays: {drive.plays}, Time: {drive.minutes}:{drive.seconds:02d}, Yards: {drive.yards}, Final Play: {drive.final_play_text}\n"
@@ -683,7 +821,7 @@ write_report(
 )
 
 write_report(
-    f"non_scoring_drives_{today}.txt",
+    f"non_scoring_drives_week_{week}.txt",
     "10 Longest Non-Scoring Drives:",
     [
         f"{i+1}. Offense: {drive.offense_team}, Defense: {drive.defense_team}, Result: {drive.result}, Plays: {drive.plays}, Time: {drive.minutes}:{drive.seconds:02d}, Yards: {drive.yards}, Final Play: {drive.final_play_text}\n"
@@ -692,7 +830,7 @@ write_report(
 )
 
 write_report(
-    f"longest_punts_{today}.txt",
+    f"longest_punts_week_{week}.txt",
     "10 Longest Punts:",
     [
         f"{i+1}. Offense: {punt.offense}, Defense: {punt.defense}, Quarter: {punt.quarter}, Time: {punt.time}, Player: #{punt.punter_number} {punt.punter_name}, Punt Distance: {punt.punt_distance} yards\n"
@@ -701,7 +839,7 @@ write_report(
 )
 
 write_report(
-    f"punts_no_touchbacks_{today}.txt",
+    f"punts_no_touchbacks_week_{week}.txt",
     "10 Longest Punts Excluding Touchbacks:",
     [
         f"{i+1}. Offense: {punt.offense}, Defense: {punt.defense}, Quarter: {punt.quarter}, Time: {punt.time}, Player: #{punt.punter_number} {punt.punter_name}, Punt Distance: {punt.punt_distance} yards\n"
@@ -719,7 +857,7 @@ write_report(
 #)
 
 write_report(
-    f"safeties_{today}.txt",
+    f"safeties_week_{week}.txt",
     "Safety Alert:",
     [
         f"{i+1}. Offense: {safety.offense}, Defense: {safety.defense}, Quarter: {safety.quarter}, Time: {safety.time}, Play Text: {safety.play_text}\n"
@@ -728,7 +866,7 @@ write_report(
 )
 
 write_report(
-    f"field_goals_{today}.txt",
+    f"field_goals_week_{week}.txt",
     "10 Longest Field Goals:",
     [
         f"{i+1}. Offense: {field_goal.offense}, Defense: {field_goal.defense}, Quarter: {field_goal.quarter}, Time: {field_goal.time}, Play Text: {field_goal.play_text}, Yards Gained: {field_goal.yards_gained}\n"
@@ -737,7 +875,7 @@ write_report(
 )
 
 write_report(
-    f"spinach_teams_of_the_week_{today}.txt",
+    f"spinach_teams_of_the_week_week_{week}.txt",
     "Spinach Teams of the Week:",
     [
         f"{i+1}. Team: {team_stat.team}, Total Points: {team_stat.total_points}, Team Yards: {team_stat.team_yards}, Total Game Yards: {team_stat.total_yards}, Spinach Yards per Point: {team_stat.spinach_yards:.2f}\n"
@@ -746,7 +884,7 @@ write_report(
 )
 
 write_report(
-    f"highest_scoring_fbs_games_{today}.txt",
+    f"highest_scoring_fbs_games_week_{week}.txt",
     "10 Highest Scoring FBS Games:",
     [
         f"{i+1}. {game.home_team} vs {game.away_team}: {game.home_score}-{game.away_score}\n"
@@ -755,7 +893,7 @@ write_report(
 )
 
 write_report(
-    f"lowest_scoring_fbs_games_{today}.txt",
+    f"lowest_scoring_fbs_games_week_{week}.txt",
     "10 Lowest Scoring FBS Games:",
     [
         f"{i+1}. {game.home_team} vs {game.away_team}: {game.home_score}-{game.away_score}\n"
@@ -764,7 +902,7 @@ write_report(
 )
 
 write_report(
-    f"highest_scoring_fcs_games_{today}.txt",
+    f"highest_scoring_fcs_games_week_{week}.txt",
     "10 Highest Scoring FCS Games:",
     [
         f"{i+1}. {game.home_team} vs {game.away_team}: {game.home_score}-{game.away_score}\n"
@@ -773,7 +911,7 @@ write_report(
 )
 
 write_report(
-    f"lowest_scoring_fcs_games_{today}.txt",
+    f"lowest_scoring_fcs_games_week_{week}.txt",
     "10 Lowest Scoring FCS Games:",
     [
         f"{i+1}. {game.home_team} vs {game.away_team}: {game.home_score}-{game.away_score}\n"
@@ -782,7 +920,7 @@ write_report(
 )
 
 write_report(
-    f"highest_scoring_d2_games_{today}.txt",
+    f"highest_scoring_d2_games_week_{week}.txt",
     "10 Highest Scoring D2 Games:",
     [
         f"{i+1}. {game.home_team} vs {game.away_team}: {game.home_score}-{game.away_score}\n"
@@ -791,7 +929,7 @@ write_report(
 )
 
 write_report(
-    f"lowest_scoring_d2_games_{today}.txt",
+    f"lowest_scoring_d2_games_week_{week}.txt",
     "10 Lowest Scoring D2 Games:",
     [
         f"{i+1}. {game.home_team} vs {game.away_team}: {game.home_score}-{game.away_score}\n"
@@ -800,7 +938,7 @@ write_report(
 )
 
 write_report(
-    f"highest_scoring_d3_games_{today}.txt",
+    f"highest_scoring_d3_games_week_{week}.txt",
     "10 Highest Scoring D3 Games:",
     [
         f"{i+1}. {game.home_team} vs {game.away_team}: {game.home_score}-{game.away_score}\n"
@@ -809,7 +947,7 @@ write_report(
 )
 
 write_report(
-    f"lowest_scoring_d3_games_{today}.txt",
+    f"lowest_scoring_d3_games_week_{week}.txt",
     "10 Lowest Scoring D3 Games:",
     [
         f"{i+1}. {game.home_team} vs {game.away_team}: {game.home_score}-{game.away_score}\n"
@@ -850,10 +988,10 @@ for game in games_that_were_17_to_0:
                 f"{j}. {game.home_team} vs {game.away_team}: {game.home_score}-{game.away_score}, {game.away_team} survived with a win of {game.away_final_score} - {game.home_final_score}\n"
             )
 
-write_report(f"games_that_were_17_to_0_{today}.txt", "", report_lines)
+write_report(f"games_that_were_17_to_0_week_{week}.txt", "", report_lines)
 
 write_report(
-    f"scoops_and_scores_{today}.txt",
+    f"scoops_and_scores_week_{week}.txt",
     "Scoop and Score Plays:",
     [
         f"{i+1}. Offense: {drive.offense_team}, Defense: {drive.defense_team}, Quarter: {drive.quarter}, Clock: {drive.clock_time}, Final Play: {drive.final_play_text}\n"
@@ -862,7 +1000,7 @@ write_report(
 )
 
 write_report(
-    f"pick_sixes_{today}.txt",
+    f"pick_sixes_week_{week}.txt",
     "Pick Six Plays:",
     [
         f"{i+1}. Offense: {drive.offense_team}, Defense: {drive.defense_team}, Quarter: {drive.quarter}, Clock: {drive.clock_time}, Final Play: {drive.final_play_text}\n"
@@ -871,7 +1009,7 @@ write_report(
 )
 
 write_report(
-    f"qb_punts_{today}.txt",
+    f"qb_punts_week_{week}.txt",
     "Quarterback Punting Stats:",
     [
         f"{i+1}. Team: {punt.team}, Conference: {punt.conference}, Player: {punt.player_name}, Position: {punt.position}, Punts: {punt.number_of_punts}, Total Yards: {punt.total_punt_yards}, Yards per Punt: {punt.yards_per_punt:.2f}, Longest Punt: {punt.longest_punt}, Punts Inside 20: {punt.punts_inside_20}, Touchbacks: {punt.touchbacks}\n"
@@ -881,7 +1019,7 @@ write_report(
 
 if len(most_other_punts) > 0:
     write_report(
-        f"other_punts_{today}.txt",
+        f"other_punts_week_{week}.txt",
         "Other Punting Stats:",
         [
             f"{i+1}. Team: {punt.team}, Conference: {punt.conference}, Player: {punt.player_name}, Position: {punt.position}, Punts: {punt.number_of_punts}, Total Yards: {punt.total_punt_yards}, Yards per Punt: {punt.yards_per_punt:.2f}, Longest Punt: {punt.longest_punt}, Punts Inside 20: {punt.punts_inside_20}, Touchbacks: {punt.touchbacks}\n"
@@ -890,7 +1028,7 @@ if len(most_other_punts) > 0:
     )
 
 write_report(
-    f"non_qb_passes_{today}.txt",
+    f"non_qb_passes_week_{week}.txt",
     "Non-QB Passing Stats:",
     [
         f"{i+1}. Team: {passer.team}, Conference: {passer.conference}, Player: {passer.player_name}, Position: {passer.position}, Attempts: {passer.passing_attempts}, Completions: {passer.passing_completions}, Yards: {passer.passing_yards}, Touchdowns: {passer.passing_touchdowns}, Interceptions: {passer.passing_interceptions}, Completion %: {passer.passing_percentage:.2f}, Yards per Attempt: {passer.passing_yards_per_attempt:.2f}\n"
@@ -899,7 +1037,7 @@ write_report(
 )
 
 write_report(
-    f"non_rusher_rushes_{today}.txt",
+    f"non_rusher_rushes_week_{week}.txt",
     "Non-Rusher Rushing Stats:",
     [
         f"{i+1}. Team: {rusher.team}, Conference: {rusher.conference}, Player: {rusher.player_name}, Position: {rusher.position}, Carries: {rusher.rushing_carries}, Yards: {rusher.rushing_yards}, Touchdowns: {rusher.rushing_touchdowns}, Longest Rush: {rusher.rushing_long}, Yards per Carry: {rusher.rushing_yards_per_carry:.2f}\n"
@@ -930,6 +1068,7 @@ for filename in [
     f"other_punts_{today}.txt"
     f"non_qb_passes_{today}.txt"
     f"non_rusher_rushes_{today}.txt"
+    f"top_turnover_games_week_{week}.txt"
 ]:
     with open(filename, "rb") as file_handle:
         file_data = file_handle.read()
