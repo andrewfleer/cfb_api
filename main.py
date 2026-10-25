@@ -1,5 +1,6 @@
 import os
 import re
+import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -791,6 +792,22 @@ def format_table(headers, rows):
     return ["\n", *(f"{line}\n" for line in (header_line, separator, *data_lines))]
 
 
+def format_table_with_details(headers, entries):
+    table_lines = format_table(headers, [row for row, _ in entries])
+    output_lines = table_lines[:3]
+    for table_line, (_, detail) in zip(table_lines[3:], entries):
+        output_lines.append(table_line)
+        wrapped_detail = textwrap.fill(
+            detail,
+            width=100,
+            initial_indent="    ",
+            subsequent_indent="        ",
+        )
+        output_lines.extend(f"{line}\n" for line in wrapped_detail.splitlines())
+        output_lines.append("\n")
+    return output_lines
+
+
 if top_turnover_games is not None:
     ranked_turnover_games = sorted(
         top_turnover_games,
@@ -839,25 +856,47 @@ if top_turnover_games is not None:
 write_report(
     f"scoring_drives_week_{week}.txt",
     "10 Longest Scoring Drives",
-    [
-        f"{i + 1}. {drive.offense_team} vs {drive.defense_team} | "
-        f"{drive.result} | {drive.plays} plays | "
-        f"{drive.minutes}:{drive.seconds:02d} | {drive.yards} yards | "
-        f"Final play: {drive.final_play_text}\n"
-        for i, drive in enumerate(longest_scoring_drives[:10])
-    ],
+    format_table_with_details(
+        ["Rank", "Offense", "Defense", "Result", "Plays", "Time", "Yards"],
+        [
+            (
+                (
+                    i + 1,
+                    drive.offense_team,
+                    drive.defense_team,
+                    drive.result,
+                    drive.plays,
+                    f"{drive.minutes}:{drive.seconds:02d}",
+                    drive.yards,
+                ),
+                f"Final play: {drive.final_play_text}",
+            )
+            for i, drive in enumerate(longest_scoring_drives[:10])
+        ],
+    ),
 )
 
 write_report(
     f"non_scoring_drives_week_{week}.txt",
     "10 Longest Non-Scoring Drives",
-    [
-        f"{i + 1}. {drive.offense_team} vs {drive.defense_team} | "
-        f"{drive.result} | {drive.plays} plays | "
-        f"{drive.minutes}:{drive.seconds:02d} | {drive.yards} yards | "
-        f"Final play: {drive.final_play_text}\n"
-        for i, drive in enumerate(longest_non_scoring_drives[:10])
-    ],
+    format_table_with_details(
+        ["Rank", "Offense", "Defense", "Result", "Plays", "Time", "Yards"],
+        [
+            (
+                (
+                    i + 1,
+                    drive.offense_team,
+                    drive.defense_team,
+                    drive.result,
+                    drive.plays,
+                    f"{drive.minutes}:{drive.seconds:02d}",
+                    drive.yards,
+                ),
+                f"Final play: {drive.final_play_text}",
+            )
+            for i, drive in enumerate(longest_non_scoring_drives[:10])
+        ],
+    ),
 )
 
 write_report(
@@ -907,22 +946,46 @@ write_report(
 write_report(
     f"safeties_week_{week}.txt",
     "Safety Alert",
-    [
-        f"{i + 1}. {safety.offense} vs {safety.defense} | "
-        f"Q{safety.quarter} {safety.time} | {safety.play_text}\n"
-        for i, safety in enumerate(safeties)
-    ],
+    format_table_with_details(
+        ["Rank", "Offense", "Defense", "Quarter", "Time"],
+        [
+            (
+                (
+                    i + 1,
+                    safety.offense,
+                    safety.defense,
+                    safety.quarter,
+                    safety.time,
+                ),
+                f"Play: {safety.play_text}",
+            )
+            for i, safety in enumerate(safeties)
+        ],
+    ),
 )
 
 write_report(
     f"field_goals_week_{week}.txt",
     "10 Longest Field Goals",
-    [
-        f"{i + 1}. {field_goal.offense} vs {field_goal.defense} | "
-        f"{field_goal.yards_gained} yd field goal | "
-        f"Q{field_goal.quarter} {field_goal.time} | {field_goal.play_text}\n"
-        for i, field_goal in enumerate(sorted(field_goals, key=lambda x: x.yards_gained, reverse=True)[:10])
-    ],
+    format_table_with_details(
+        ["Rank", "Offense", "Defense", "Distance", "Quarter", "Time"],
+        [
+            (
+                (
+                    i + 1,
+                    field_goal.offense,
+                    field_goal.defense,
+                    f"{field_goal.yards_gained} yd",
+                    field_goal.quarter,
+                    field_goal.time,
+                ),
+                f"Play: {field_goal.play_text}",
+            )
+            for i, field_goal in enumerate(
+                sorted(field_goals, key=lambda x: x.yards_gained, reverse=True)[:10]
+            )
+        ],
+    ),
 )
 
 write_report(
@@ -1026,21 +1089,43 @@ write_report(
 write_report(
     f"scoops_and_scores_week_{week}.txt",
     "Scoop and Score Plays",
-    [
-        f"{i + 1}. {drive.offense_team} vs {drive.defense_team} | "
-        f"Q{drive.quarter} {drive.clock_time} | {drive.final_play_text}\n"
-        for i, drive in enumerate(scoops_and_scores)
-    ],
+    format_table_with_details(
+        ["Rank", "Offense", "Defense", "Quarter", "Time"],
+        [
+            (
+                (
+                    i + 1,
+                    drive.offense_team,
+                    drive.defense_team,
+                    drive.quarter,
+                    drive.clock_time,
+                ),
+                f"Play: {drive.final_play_text}",
+            )
+            for i, drive in enumerate(scoops_and_scores)
+        ],
+    ),
 )
 
 write_report(
     f"pick_sixes_week_{week}.txt",
     "Pick Six Plays",
-    [
-        f"{i + 1}. {drive.offense_team} vs {drive.defense_team} | "
-        f"Q{drive.quarter} {drive.clock_time} | {drive.final_play_text}\n"
-        for i, drive in enumerate(pick_sixes)
-    ],
+    format_table_with_details(
+        ["Rank", "Offense", "Defense", "Quarter", "Time"],
+        [
+            (
+                (
+                    i + 1,
+                    drive.offense_team,
+                    drive.defense_team,
+                    drive.quarter,
+                    drive.clock_time,
+                ),
+                f"Play: {drive.final_play_text}",
+            )
+            for i, drive in enumerate(pick_sixes)
+        ],
+    ),
 )
 
 write_report(
