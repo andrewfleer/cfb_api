@@ -260,6 +260,91 @@ def build_turnover_games(game_team_stats):
     return games
 
 
+def build_most_punts_game_rows(games, plays):
+    games_by_id = {game.id: game for game in games}
+    punt_counts = {game.id: {"home": 0, "away": 0} for game in games}
+    for play in plays:
+        game = games_by_id.get(play.game_id)
+        if game is None or play.play_type != "Punt":
+            continue
+        if play.offense == game.home_team:
+            punt_counts[game.id]["home"] += 1
+        elif play.offense == game.away_team:
+            punt_counts[game.id]["away"] += 1
+
+    ranked_games = sorted(
+        games,
+        key=lambda game: sum(punt_counts[game.id].values()),
+        reverse=True,
+    )[:10]
+    return [
+        (
+            rank,
+            f"{game.home_team} vs {game.away_team}",
+            (
+                f"{game.home_points}-{game.away_points}"
+                if game.home_points is not None and game.away_points is not None
+                else "N/A"
+            ),
+            punt_counts[game.id]["home"],
+            punt_counts[game.id]["away"],
+            sum(punt_counts[game.id].values()),
+        )
+        for rank, game in enumerate(ranked_games, start=1)
+    ]
+
+
+def build_fewest_total_yard_game_rows(game_team_stats, games_by_id):
+    game_rows = []
+    for game_stats in game_team_stats:
+        game = games_by_id.get(game_stats.id)
+        if game is None:
+            continue
+
+        teams_by_location = {team.home_away: team for team in game_stats.teams}
+        if len(game_stats.teams) != 2 or set(teams_by_location) != {"home", "away"}:
+            raise ValueError(
+                f"Expected one home and one away team for game {game_stats.id}"
+            )
+
+        total_yards_by_team = {}
+        for location in ("home", "away"):
+            team = teams_by_location[location]
+            team_stats = {stat.category: stat.stat for stat in team.stats}
+            if "totalYards" not in team_stats:
+                raise ValueError(
+                    f"Missing totalYards stat for {team.team} in game {game_stats.id}"
+                )
+            total_yards_by_team[location] = int(team_stats["totalYards"])
+
+        total_yards = sum(total_yards_by_team.values())
+        game_rows.append(
+            (
+                total_yards,
+                f"{game.home_team} vs {game.away_team}",
+                (
+                    f"{game.home_points}-{game.away_points}"
+                    if game.home_points is not None and game.away_points is not None
+                    else "N/A"
+                ),
+                total_yards_by_team["home"],
+                total_yards_by_team["away"],
+            )
+        )
+
+    ranked_games = sorted(game_rows, key=lambda row: row[0])[:10]
+    return [
+        (rank, game, score, home_yards, away_yards, total_yards)
+        for rank, (
+            total_yards,
+            game,
+            score,
+            home_yards,
+            away_yards,
+        ) in enumerate(ranked_games, start=1)
+    ]
+
+
 def build_spinach_teams(game_team_stats):
     teams_with_high_yardage_share = []
     for team_stat in game_team_stats:
@@ -350,6 +435,8 @@ with ApiClient(configuration) as api_client:
     stats_api = StatsApi(api_client)
     top_turnover_games = None
     weekly_game_team_stats = None
+    most_punts_game_rows = []
+    fewest_total_yards_game_rows = []
 
     print(f"Getting game data for year {year} - week {week}...")
     try:
@@ -387,10 +474,21 @@ with ApiClient(configuration) as api_client:
     if weekly_game_team_stats is not None:
         try:
             top_turnover_games = build_turnover_games(weekly_game_team_stats)
+            fewest_total_yards_game_rows = build_fewest_total_yard_game_rows(
+                weekly_game_team_stats,
+                games_by_id,
+            )
         except Exception as e:
-            error_message=f"Exception when building Top Turnover Games report: {e}\n"
+            error_message=f"Exception when building game stats reports: {e}\n"
             discord_webhook_error_alert(error_message=error_message)
             sys.exit()
+
+    try:
+        most_punts_game_rows = build_most_punts_game_rows(week_games, week_plays)
+    except Exception as e:
+        error_message=f"Exception when building Most Punts by Game report: {e}\n"
+        discord_webhook_error_alert(error_message=error_message)
+        sys.exit()
 
     plays_by_drive = {}
     for play in week_plays:
@@ -912,6 +1010,25 @@ if top_turnover_games is not None:
             turnover_report_rows,
         ),
     )
+
+
+write_report(
+    f"most_punts_by_game_week_{week}.txt",
+    "10 Games With the Most Punts",
+    format_table(
+        ["Rank", "Game", "Score", "Home Punts", "Away Punts", "Total Punts"],
+        most_punts_game_rows,
+    ),
+)
+
+write_report(
+    f"fewest_total_yards_by_game_week_{week}.txt",
+    "10 Games With the Fewest Total Yards",
+    format_table(
+        ["Rank", "Game", "Score", "Home Yards", "Away Yards", "Total Yards"],
+        fewest_total_yards_game_rows,
+    ),
+)
 
 
 write_report(
