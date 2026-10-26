@@ -345,6 +345,91 @@ def build_fewest_total_yard_game_rows(game_team_stats, games_by_id):
     ]
 
 
+def build_safety_leaderboard_rows(safety_plays):
+    team_safety_counts = {}
+    game_safety_counts = {}
+    for week_number, play in safety_plays:
+        if play.play_type != "Safety":
+            continue
+        if not play.defense:
+            raise ValueError(f"Safety play {play.id} is missing its defense team")
+
+        team_safety_counts[play.defense] = team_safety_counts.get(play.defense, 0) + 1
+        game_counts = game_safety_counts.setdefault(
+            play.game_id,
+            {
+                "home": play.home,
+                "away": play.away,
+                "home_count": 0,
+                "away_count": 0,
+                "count": 0,
+                "week": week_number,
+            },
+        )
+        game_counts["count"] += 1
+        if play.defense == play.home:
+            game_counts["home_count"] += 1
+        elif play.defense == play.away:
+            game_counts["away_count"] += 1
+        else:
+            raise ValueError(
+                f"Safety play {play.id} defense does not match a game team"
+            )
+
+    def top_rows(counts, label_for, count_for):
+        ranked = sorted(
+            counts,
+            key=lambda item: (-count_for(item), label_for(item)),
+        )
+        selected = ranked[:10]
+        if len(ranked) > 10 and selected:
+            cutoff_count = count_for(selected[-1])
+            selected.extend(
+                item for item in ranked[10:] if count_for(item) == cutoff_count
+            )
+
+        rows = []
+        rank = 0
+        previous_count = None
+        for item in selected:
+            count = count_for(item)
+            if count != previous_count:
+                rank += 1
+                previous_count = count
+            rows.append((rank, item, label_for(item), count))
+        return rows
+
+    team_ranked_rows = top_rows(
+        list(team_safety_counts),
+        label_for=lambda team: team,
+        count_for=lambda team: team_safety_counts[team],
+    )
+    team_rows = [
+        (rank, team, count)
+        for rank, team, _, count in team_ranked_rows
+    ]
+    game_ranked_rows = top_rows(
+        list(game_safety_counts),
+        label_for=lambda game_id: (
+            f"{game_safety_counts[game_id]['home']} vs "
+            f"{game_safety_counts[game_id]['away']}"
+        ),
+        count_for=lambda game_id: game_safety_counts[game_id]["count"],
+    )
+    game_rows = [
+        (
+            rank,
+            game_safety_counts[game_id]["week"],
+            label,
+            game_safety_counts[game_id]["home_count"],
+            game_safety_counts[game_id]["away_count"],
+            count,
+        )
+        for rank, game_id, label, count in game_ranked_rows
+    ]
+    return team_rows, game_rows
+
+
 def build_spinach_teams(game_team_stats):
     teams_with_high_yardage_share = []
     for team_stat in game_team_stats:
@@ -437,6 +522,7 @@ with ApiClient(configuration) as api_client:
     weekly_game_team_stats = None
     most_punts_game_rows = []
     fewest_total_yards_game_rows = []
+    season_safety_plays = []
 
     print(f"Getting game data for year {year} - week {week}...")
     try:
@@ -459,6 +545,34 @@ with ApiClient(configuration) as api_client:
         week_plays = plays_api.get_plays(year, week=week)
     except Exception as e:
         error_message=f"Exception when calling PlaysApi->get_plays: {e}\n"
+        discord_webhook_error_alert(error_message=error_message)
+        sys.exit()
+
+    season_safety_plays.extend(
+        (week, play) for play in week_plays if play.play_type == "Safety"
+    )
+    for season_week in range(1, week):
+        print(f"Getting safety plays for year {year} - week {season_week}...")
+        try:
+            season_week_plays = plays_api.get_plays(year, week=season_week)
+            season_safety_plays.extend(
+                (season_week, play)
+                for play in season_week_plays
+                if play.play_type == "Safety"
+            )
+        except Exception as e:
+            error_message = (
+                f"Exception when getting safety plays for week {season_week}: {e}\n"
+            )
+            discord_webhook_error_alert(error_message=error_message)
+            sys.exit()
+
+    try:
+        season_safety_team_rows, season_safety_game_rows = (
+            build_safety_leaderboard_rows(season_safety_plays)
+        )
+    except Exception as e:
+        error_message = f"Exception when building season safety reports: {e}\n"
         discord_webhook_error_alert(error_message=error_message)
         sys.exit()
 
@@ -1027,6 +1141,24 @@ write_report(
     format_table(
         ["Rank", "Game", "Score", "Home Yards", "Away Yards", "Total Yards"],
         fewest_total_yards_game_rows,
+    ),
+)
+
+write_report(
+    f"most_safeties_by_team_year_{year}_through_week_{week}.txt",
+    "Top 10 Teams With the Most Safeties This Season",
+    format_table(
+        ["Rank", "Team", "Safeties"],
+        season_safety_team_rows,
+    ),
+)
+
+write_report(
+    f"most_safeties_by_game_year_{year}_through_week_{week}.txt",
+    "10 Games With the Most Safeties This Season",
+    format_table(
+        ["Rank", "Week", "Game", "Home Safeties", "Away Safeties", "Total Safeties"],
+        season_safety_game_rows,
     ),
 )
 
