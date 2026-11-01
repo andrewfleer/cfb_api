@@ -35,6 +35,7 @@ jobs:
           host: ${{ secrets.HOST }}
           access_token: ${{ secrets.ACCESS_TOKEN }}
           discord_webhook: ${{ secrets.DISCORD_WEBHOOK }}
+          discord_user: ${{ secrets.DISCORD_USER }}
           YEAR: ${{ github.event.inputs.year }}
           WEEK: ${{ github.event.inputs.week }}
         run: python main.py
