@@ -352,10 +352,15 @@ def build_safety_leaderboard_rows(safety_plays):
     for week_number, play in safety_plays:
         if play.play_type != "Safety":
             continue
+        if not play.offense:
+            raise ValueError(f"Safety play {play.id} is missing its offense team")
         if not play.defense:
             raise ValueError(f"Safety play {play.id} is missing its defense team")
 
         team_safety_counts[play.defense] = team_safety_counts.get(play.defense, 0) + 1
+        team_safeties_surrendered_counts[play.offense] = (
+            team_safeties_surrendered_counts.get(play.offense, 0) + 1
+        )
         game_counts = game_safety_counts.setdefault(
             play.game_id,
             {
@@ -375,6 +380,10 @@ def build_safety_leaderboard_rows(safety_plays):
         else:
             raise ValueError(
                 f"Safety play {play.id} defense does not match a game team"
+            )
+        if play.offense not in (play.home, play.away) or play.offense == play.defense:
+            raise ValueError(
+                f"Safety play {play.id} offense does not match the opposing game team"
             )
 
     def top_rows(counts, label_for, count_for):
@@ -409,6 +418,15 @@ def build_safety_leaderboard_rows(safety_plays):
         (rank, team, count)
         for rank, team, _, count in team_ranked_rows
     ]
+    team_safeties_surrendered_ranked_rows = top_rows(
+        list(team_safeties_surrendered_counts),
+        label_for=lambda team: team,
+        count_for=lambda team: team_safeties_surrendered_counts[team],
+    )
+    team_safeties_surrendered_rows = [
+        (rank, team, count)
+        for rank, team, _, count in team_safeties_surrendered_ranked_rows
+    ]
     game_ranked_rows = top_rows(
         list(game_safety_counts),
         label_for=lambda game_id: (
@@ -428,7 +446,7 @@ def build_safety_leaderboard_rows(safety_plays):
         )
         for rank, game_id, label, count in game_ranked_rows
     ]
-    return team_rows, game_rows
+    return team_rows, team_safeties_surrendered_rows, game_rows
 
 
 def build_spinach_teams(game_team_stats):
@@ -569,7 +587,11 @@ with ApiClient(configuration) as api_client:
             sys.exit()
 
     try:
-        season_safety_team_rows, season_safety_game_rows = (
+        (
+            season_safety_team_rows,
+            season_safeties_surrendered_team_rows,
+            season_safety_game_rows,
+        ) = (
             build_safety_leaderboard_rows(season_safety_plays)
         )
     except Exception as e:
@@ -1147,10 +1169,19 @@ write_report(
 
 write_report(
     f"most_safeties_by_team_year_{year}_through_week_{week}.txt",
-    "Top 10 Teams With the Most Safeties This Season",
+    "Top 10 Teams With the Most Safeties Forced This Season",
     format_table(
         ["Rank", "Team", "Safeties"],
         season_safety_team_rows,
+    ),
+)
+
+write_report(
+    f"most_safeties_surrendered_by_team_year_{year}_through_week_{week}.txt",
+    "Top 10 Teams With the Most Safeties Surrendered This Season",
+    format_table(
+        ["Rank", "Team", "Safeties Surrendered"],
+        season_safeties_surrendered_team_rows,
     ),
 )
 
