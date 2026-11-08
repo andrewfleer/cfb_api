@@ -347,6 +347,7 @@ def build_fewest_total_yard_game_rows(game_team_stats, games_by_id):
 
 def build_safety_leaderboard_rows(safety_plays):
     team_safety_counts = {}
+    team_safeties_surrendered_counts = {}
     game_safety_counts = {}
     for week_number, play in safety_plays:
         if play.play_type != "Safety":
