@@ -532,6 +532,34 @@ def add_17_to_0_game(drive):
         games_that_were_17_to_0.append(candidate)
 
 
+def build_season_long_drive_rows(season_drives):
+    qualifying_drives = (
+        (season_week, drive)
+        for season_week, drive in season_drives
+        if 95 <= drive.yards <= 99
+        and (drive.elapsed.minutes > 0 or drive.elapsed.seconds > 0)
+    )
+    return [
+        (
+            season_week,
+            drive.offense,
+            drive.defense,
+            drive.start_period,
+            f"{drive.start_time.minutes}:{drive.start_time.seconds:02d}",
+            drive.end_period,
+            f"{drive.end_time.minutes}:{drive.end_time.seconds:02d}",
+            f"{drive.elapsed.minutes}:{drive.elapsed.seconds:02d}",
+            drive.plays,
+            drive.yards,
+            drive.drive_result,
+        )
+        for season_week, drive in sorted(
+            qualifying_drives,
+            key=lambda item: (-item[1].yards, item[0], item[1].offense),
+        )
+    ]
+
+
 with ApiClient(configuration) as api_client:
     drives_api = DrivesApi(api_client)
     plays_api = PlaysApi(api_client)
@@ -559,6 +587,8 @@ with ApiClient(configuration) as api_client:
         discord_webhook_error_alert(error_message=error_message)
         sys.exit()
 
+    season_drives = [(week, drive) for drive in week_drives]
+
     print(f"Getting play data for year {year} - week {week}...")
     try:
         week_plays = plays_api.get_plays(year, week=week)
@@ -584,6 +614,19 @@ with ApiClient(configuration) as api_client:
                 f"Exception when getting safety plays for week {season_week}: {e}\n"
             )
             discord_webhook_error_alert(error_message=error_message)
+            sys.exit()
+
+        print(f"Getting drives for year {year} - week {season_week}...")
+        try:
+            season_week_drives = drives_api.get_drives(year, week=season_week)
+            season_drives.extend(
+                (season_week, drive) for drive in season_week_drives
+            )
+        except Exception as e:
+            error_message = (
+                f"Exception when getting drives for week {season_week}: {e}\n"
+            )
+            discord_webhook_error_alert(error_message)
             sys.exit()
 
     try:
@@ -1194,6 +1237,36 @@ write_report(
     ),
 )
 
+season_long_drive_rows = build_season_long_drive_rows(season_drives)
+season_long_drive_headers = [
+    "Week",
+    "Offense",
+    "Defense",
+    "Start Qtr",
+    "Start Time",
+    "End Qtr",
+    "End Time",
+    "Drive Time",
+    "Plays",
+    "Yards",
+    "Result",
+]
+season_long_drive_table = format_table(
+    season_long_drive_headers,
+    season_long_drive_rows,
+)
+nine_nine_drive_count = sum(row[9] == 99 for row in season_long_drive_rows)
+if 0 < nine_nine_drive_count < len(season_long_drive_rows):
+    season_long_drive_table.insert(
+        3 + nine_nine_drive_count,
+        season_long_drive_table[2],
+    )
+
+write_report(
+    f"long_drives_year_{year}_through_week_{week}.txt",
+    "Season Drives of 95-99 Yards",
+    season_long_drive_table,
+)
 
 write_report(
     f"scoring_drives_week_{week}.txt",
