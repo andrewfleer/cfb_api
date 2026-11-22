@@ -560,6 +560,40 @@ def build_season_long_drive_rows(season_drives):
     ]
 
 
+def build_season_fast_drive_rows(season_drives):
+    qualifying_drives = []
+    for season_week, drive in season_drives:
+        elapsed = drive.elapsed
+        elapsed_seconds = (
+            (elapsed.minutes or 0) * 60 + (elapsed.seconds or 0)
+            if elapsed is not None
+            else 0
+        )
+        plays = drive.plays or 0
+        if elapsed_seconds <= 0 or plays < 4:
+            continue
+        qualifying_drives.append(
+            (season_week, drive, elapsed_seconds, plays, plays * 60 / elapsed_seconds)
+        )
+
+    return [
+        (
+            season_week,
+            drive.offense,
+            drive.defense,
+            plays,
+            f"{elapsed_seconds // 60}:{elapsed_seconds % 60:02d}",
+            f"{plays * 60 / elapsed_seconds:.2f}",
+            drive.yards,
+            drive.drive_result,
+        )
+        for season_week, drive, elapsed_seconds, plays, _ in sorted(
+            qualifying_drives,
+            key=lambda item: (-item[4], -item[3], item[2], item[0], item[1].offense),
+        )[:10]
+    ]
+
+
 with ApiClient(configuration) as api_client:
     drives_api = DrivesApi(api_client)
     plays_api = PlaysApi(api_client)
@@ -1266,6 +1300,28 @@ write_report(
     f"long_drives_year_{year}_through_week_{week}.txt",
     "Season Drives of 95-99 Yards",
     season_long_drive_table,
+)
+
+week_fast_drive_rows = build_season_fast_drive_rows(
+    [(week, drive) for drive in week_drives]
+)
+write_report(
+    f"fastest_high_play_drives_week_{week}.txt",
+    "Drives With the Most Plays Per Minute This Week",
+    format_table(
+        ["Week", "Offense", "Defense", "Plays", "Time", "Plays/Min", "Yards", "Result"],
+        week_fast_drive_rows,
+    ),
+)
+
+season_fast_drive_rows = build_season_fast_drive_rows(season_drives)
+write_report(
+    f"fastest_high_play_drives_year_{year}_through_week_{week}.txt",
+    "Drives With the Most Plays Per Minute This Season",
+    format_table(
+        ["Week", "Offense", "Defense", "Plays", "Time", "Plays/Min", "Yards", "Result"],
+        season_fast_drive_rows,
+    ),
 )
 
 write_report(
